@@ -66,7 +66,8 @@ def find_neighbors(point_index, points, eps):
                 neighbors.append(i)
     return neighbors
 
-def get_epsilon(points, k, plot=True):
+@njit
+def compute_kn_distances(points, k):
     kn_distances = []
     for i in range(len(points)):
         eucl_dist = []
@@ -80,9 +81,12 @@ def get_epsilon(points, k, plot=True):
                 )
         eucl_dist.sort()
         kn_distances.append(eucl_dist[k-1])  # k-1 porque los índices empiezan en 0
-
+    return np.array(kn_distances)
+    
+def get_epsilon(points, k):
+    kn_distances = compute_kn_distances(points, k)
     kn_distances = np.sort(kn_distances)[::-1]  # Orden descendente
-
+    
     # if plot:
     #     plt.figure()
     #     plt.plot(range(1, len(kn_distances)+1), kn_distances)
