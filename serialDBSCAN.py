@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
+from numba import njit
 
 def load_image():
     if len(sys.argv) != 2:
@@ -17,6 +18,7 @@ def compute_histogram(image):
     color_histogram = np.histogram(image, bins=[0, 1, 2])[0]
     return color_histogram
 
+@njit
 def get_points_in_cluster(image, color_marker):
     points = []
     y_len, x_len = image.shape
@@ -25,6 +27,7 @@ def get_points_in_cluster(image, color_marker):
             if image[y, x] != color_marker:
                 points.append((x, y))
     return points
+
 
 def dbscan(points, eps, min_pts):
     labels = np.zeros(len(points), dtype=int) - 1
@@ -80,12 +83,12 @@ def get_epsilon(points, k, plot=True):
 
     kn_distances = np.sort(kn_distances)[::-1]  # Orden descendente
 
-    if plot:
-        plt.figure()
-        plt.plot(range(1, len(kn_distances)+1), kn_distances)
-        plt.xlabel('Points sorted by k-distance')
-        plt.ylabel(f'Distance to {k}-th nearest neighbor')
-        plt.title('k-distance Graph')
+    # if plot:
+    #     plt.figure()
+    #     plt.plot(range(1, len(kn_distances)+1), kn_distances)
+    #     plt.xlabel('Points sorted by k-distance')
+    #     plt.ylabel(f'Distance to {k}-th nearest neighbor')
+    #     plt.title('k-distance Graph')
 
     # Derivada discreta para encontrar el "codo"
     diffs = np.diff(kn_distances)
@@ -94,6 +97,14 @@ def get_epsilon(points, k, plot=True):
     print(f"Recommended epsilon (at elbow): {epsilon}")
     return epsilon
 
+def paint_clusters(image, clusters):
+    image_colored = np.zeros((*image.shape, 3), dtype=np.uint8)
+    colors = plt.cm.get_cmap('hsv', len(clusters) + 1)
+    for cluster_id, cluster in enumerate(clusters):
+        color = (np.array(colors(cluster_id)[:3]) * 255).astype(np.uint8)
+        for point in cluster:
+            image_colored[point[1], point[0]] = color
+    return image_colored
 
 if __name__ == "__main__":
     image_bw = load_image()
@@ -106,5 +117,6 @@ if __name__ == "__main__":
     points = get_points_in_cluster(image_bw, color_marker)
     clusters, labels = dbscan(points, eps=get_epsilon(points, k=5), min_pts=5)
     print(f"Number of clusters: {len(clusters)}")
-    plt.imshow(image_bw, cmap='gray')
+    image_colored = paint_clusters(image_bw, clusters)
+    plt.imshow(image_colored)
     plt.show()
