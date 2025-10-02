@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from numba import njit
+import time
 
 def load_image():
     if len(sys.argv) != 2:
@@ -45,9 +46,7 @@ def dbscan(points, eps, min_pts):
                         cluster.append(points[neighbor_index])
                         neighbors_aux = find_neighbors(neighbor_index, points, eps)
                         if len(neighbors_aux) >= min_pts:
-                            for n in neighbors_aux:
-                                if n not in neighbors:
-                                    neighbors.append(n)
+                            neighbors = append_neighbors(neighbors, neighbors_aux)
                     if labels[neighbor_index] == 0:
                         labels[neighbor_index] = cluster_id
                         cluster.append(points[neighbor_index])
@@ -57,6 +56,7 @@ def dbscan(points, eps, min_pts):
                 labels[point_index] = 0
     return clusters, labels
 
+
 def find_neighbors(point_index, points, eps):
     neighbors = []
     for i in range(len(points)):
@@ -64,6 +64,18 @@ def find_neighbors(point_index, points, eps):
             distance = np.sqrt((points[point_index][0] - points[i][0]) ** 2 + (points[point_index][1] - points[i][1]) ** 2)
             if distance <= eps:
                 neighbors.append(i)
+    return neighbors
+
+@njit
+def append_neighbors(neighbors, neighbors_aux):
+    for i in range(len(neighbors_aux)):
+        found = False
+        for j in range(len(neighbors)):
+            if neighbors_aux[i] == neighbors[j]:
+                found = True
+                break
+        if not found:
+            neighbors.append(neighbors_aux[i])
     return neighbors
 
 @njit
@@ -103,24 +115,25 @@ def get_epsilon(points, k):
 
 def paint_clusters(image, clusters):
     image_colored = np.zeros((*image.shape, 3), dtype=np.uint8)
-    colors = plt.cm.get_cmap('hsv', len(clusters) + 1)
+    # Precalcula todos los colores
+    cmap = plt.get_cmap('hsv', len(clusters) + 1)
+    color_list = [(np.array(cmap(i)[:3]) * 255).astype(np.uint8) for i in range(len(clusters))]
     for cluster_id, cluster in enumerate(clusters):
-        color = (np.array(colors(cluster_id)[:3]) * 255).astype(np.uint8)
+        color = color_list[cluster_id]
         for point in cluster:
             image_colored[point[1], point[0]] = color
     return image_colored
 
 if __name__ == "__main__":
+    start = time.time()
     image_bw = load_image()
     print(f"Image shape: {image_bw.shape}")
     hist = compute_histogram(image_bw)
-    print(hist)
-    color_marker = 0
-    if hist[0] < hist[1]:
-        color_marker = 1
+    color_marker = 1 if hist[0] < hist[1] else 0
     points = get_points_in_cluster(image_bw, color_marker)
     clusters, labels = dbscan(points, eps=get_epsilon(points, k=5), min_pts=5)
-    print(f"Number of clusters: {len(clusters)}")
+    end = time.time()
+    print("Time = ", end - start)
     image_colored = paint_clusters(image_bw, clusters)
     plt.imshow(image_colored)
     plt.show()
