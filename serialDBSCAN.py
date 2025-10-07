@@ -77,15 +77,11 @@ def dbscan_core(points, eps, min_pts, labels):
                 labels[point_index] = 0
     return labels, cluster_id
 
+@njit
 def dbscan(points, eps, min_pts):
     labels = np.zeros(len(points), dtype=np.int64) - 1
     labels, cluster_count= dbscan_core(points, eps, min_pts, labels)
-    clusters = []
-    for cluster_id in range(1, np.max(labels)+1):
-        cluster_points = points[labels == cluster_id]
-        if len(cluster_points) > 0:
-            clusters.append(cluster_points)
-    return clusters, labels
+    return labels,cluster_count
 
 @njit
 def find_neighbors(point_index, points, eps):
@@ -149,18 +145,39 @@ def get_epsilon(points, k,std_scale):
     kn_distances = compute_kn_distances(points, k)
     kn_distances = np.sort(kn_distances)[::1]
     epsilon = np.mean(kn_distances) + np.std(kn_distances) * std_scale
-    print(f"Recommended epsilon (at elbow): {epsilon}")
+    print(f"Recommended epsilon: {epsilon}")
     return epsilon
 
-def paint_clusters(image, clusters):
+def paint_clusters(image, points, labels):
     image_colored = np.zeros((*image.shape, 3), dtype=np.uint8)
-    cmap = plt.get_cmap('hsv', len(clusters) + 1)
-    color_list = [(np.array(cmap(i)[:3]) * 255).astype(np.uint8) for i in range(len(clusters))]
-    for cluster_id, cluster in enumerate(clusters):
-        color = color_list[cluster_id]
-        for point in cluster:
-            image_colored[point[1], point[0]] = color
+
+    # labels puede contener -1 (noise). Obtenemos labels positivos ordenados.
+    pos_mask = labels != -1
+    pos_labels = np.unique(labels[pos_mask]) if np.any(pos_mask) else np.array([], dtype=np.int64)
+
+    if len(pos_labels) == 0:
+        # No hay clusters, devolver imagen en RGB (blanco/negro)
+        bw = (image * 255).astype(np.uint8)
+        return np.stack([bw, bw, bw], axis=-1)
+
+    cmap = plt.get_cmap('hsv', len(pos_labels))
+    color_list = [(np.array(cmap(i)[:3]) * 255).astype(np.uint8) for i in range(len(pos_labels))]
+    # Mapeo label -> índice en color_list
+    label_to_idx = {int(label): idx for idx, label in enumerate(pos_labels)}
+
+    for idx in range(points.shape[0]):
+        x = int(points[idx, 0])
+        y = int(points[idx, 1])
+        lab = int(labels[idx])
+        if lab == -1:
+            # noise en negro (0,0,0)
+            image_colored[y, x] = np.array([0, 0, 0], dtype=np.uint8)
+        else:
+            color = color_list[label_to_idx[lab]]
+            image_colored[y, x] = color
+
     return image_colored
+
 
 if __name__ == "__main__":
     start = time.time()
@@ -171,12 +188,12 @@ if __name__ == "__main__":
     points = get_points_in_cluster(image_bw, color_marker)
     eps = get_epsilon(points, k=5,std_scale=std_scale)
     timeEpsilon = time.time()
-    print("Time1 = ", timeEpsilon - start)
-    clusters, labels = dbscan(points, eps, min_pts=5)
-    print(f"Number of clusters found: {len(clusters)}")
+    print("TimeEpsilon = ", timeEpsilon - start)
+    labels,cluster_count = dbscan(points, eps, min_pts=5)
+    print(f"Number of clusters found: {cluster_count}")
     end = time.time()
     print("Final time = ", end - start)
-    image_colored = paint_clusters(image_bw, clusters)
+    image_colored = paint_clusters(image_bw, points, labels)
     
     # Guardar la imagen coloreada
     image_filename = sys.argv[1]
