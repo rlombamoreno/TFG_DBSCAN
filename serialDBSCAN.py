@@ -18,7 +18,7 @@ def load_image():
 def load_std_scale():
     if len(sys.argv) != 3:
         print("serialDBSCAN: Using default std_scale=1")
-        return 1
+        return 1.00
     std_scale = float(sys.argv[2])
     if std_scale < 0 or std_scale > 1:
         print("serialDBSCAN: std_scale must be between 0 and 1")
