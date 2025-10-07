@@ -25,6 +25,13 @@ def load_std_scale():
         sys.exit(1)
     return std_scale
 
+def save_image(image_colored):
+    image_filename = sys.argv[1]
+    name, ext = os.path.splitext(image_filename)
+    output_filename = f"{name}_clusters_CPU.png"
+    plt.imsave(output_filename, image_colored)
+    print(f"Clustered image saved as: {output_filename}")
+
 @njit
 def compute_histogram(image):
     y_len, x_len = image.shape
@@ -124,6 +131,7 @@ def append_neighbors(neighbors, neighbors_aux):
             count += 1
     return temp[:count]
 
+# Compute k-nearest neighbor distances
 @njit
 def compute_kn_distances(points, k):
     kn_distances = np.empty(len(points), dtype=np.float64)
@@ -141,64 +149,85 @@ def compute_kn_distances(points, k):
     return kn_distances
 
 def get_epsilon(points, k,std_scale):
-    kn_distances = compute_kn_distances(points, k)
+    kn_distances = compute_kn_distances(points, k) # k-distances
+    # Heuristic: epsilon = mean + std_dev * std_scale
     epsilon = np.mean(kn_distances) + np.std(kn_distances) * std_scale
     print(f"Recommended epsilon: {epsilon}")
     return epsilon
 
-def paint_clusters(image, points, labels,cluster_count):
-    image_colored = np.zeros((*image.shape, 3), dtype=np.uint8)
+def paint_clusters(image, points, labels, cluster_count, color_marker):
+    # Use color_marker to determine background and foreground
+    if color_marker == 1:
+        base = (1 - image) * 255 # white background
+    else:
+        base = image * 255 # black background
 
-    # labels puede contener -1 (noise). Obtenemos labels positivos ordenados.
-    pos_mask = labels != -1
-    pos_labels = np.unique(labels[pos_mask]) if np.any(pos_mask) else np.array([], dtype=np.int64)
+    # Create an RGB image from the base
+    image_rgb = np.stack([base, base, base], axis=-1).astype(np.uint8)
 
-    if cluster_count == 0:
-        # No hay clusters, devolver imagen en RGB (blanco/negro)
-        bw = (image * 255).astype(np.uint8)
-        return np.stack([bw, bw, bw], axis=-1)
+    # If no clusters or no points, return the base image
+    if cluster_count == 0 or len(points) == 0:
+        return image_rgb
 
-    cmap = plt.get_cmap('hsv', len(pos_labels))
-    color_list = [(np.array(cmap(i)[:3]) * 255).astype(np.uint8) for i in range(len(pos_labels))]
-    # Mapeo label -> índice en color_list
-    label_to_idx = {int(label): idx for idx, label in enumerate(pos_labels)}
+    # Separate noise and clusters
+    noise_mask = labels == -1
+    cluster_mask = ~noise_mask
 
-    for idx in range(points.shape[0]):
-        x = int(points[idx, 0])
-        y = int(points[idx, 1])
-        lab = int(labels[idx])
-        if lab == -1:
-            # noise en negro (0,0,0)
-            image_colored[y, x] = np.array([0, 0, 0], dtype=np.uint8)
-        else:
-            color = color_list[label_to_idx[lab]]
-            image_colored[y, x] = color
+    # Paint noise in dark red or black (optional: use black for consistency)
+    if np.any(noise_mask):
+        noise_pts = points[noise_mask]
+        image_rgb[noise_pts[:, 1], noise_pts[:, 0]] = [0, 0, 0]  # noise in black
 
-    return image_colored
+    # Paint clusters with colors
+    if np.any(cluster_mask):
+        cluster_pts = points[cluster_mask]
+        cluster_labels = labels[cluster_mask]
+        unique_labels = np.unique(cluster_labels)
+        n_clusters = len(unique_labels)
+
+        # Generate distinct colors (excluding black and white)
+        hues = np.linspace(0, 1, n_clusters + 1)[:-1]  # avoid repetition
+        colors = (plt.cm.hsv(hues)[:, :3] * 255).astype(np.uint8)
+
+        # Map labels to colors
+        label_to_color = {label: colors[i] for i, label in enumerate(unique_labels)}
+        # Assign colors
+        for (x, y), lab in zip(cluster_pts, cluster_labels):
+            image_rgb[y, x] = label_to_color[lab]
+    return image_rgb
 
 
 if __name__ == "__main__":
+    # Start timing
     start = time.time()
+    
+    # Load image and std_scale
     image_bw = load_image()
     std_scale=load_std_scale()
+    
+    # Determine color marker based on histogram
     hist = compute_histogram(image_bw)
     color_marker = 1 if hist[0] < hist[1] else 0
+    
+    # Extract points from the image
     points = get_points_in_cluster(image_bw, color_marker)
+    
+    # Compute epsilon using k-NN distances
     eps = get_epsilon(points, k=5,std_scale=std_scale)
-    timeEpsilon = time.time()
+    timeEpsilon = time.time() # Time after epsilon calculation
     print("TimeEpsilon = ", timeEpsilon - start)
+    
+    # Run DBSCAN
     labels,cluster_count = dbscan(points, eps, min_pts=5)
     print(f"Number of clusters found: {cluster_count}")
+    
+    # End timing
     end = time.time()
     print("Final time = ", end - start)
-    image_colored = paint_clusters(image_bw, points, labels, cluster_count)
     
-    # Guardar la imagen coloreada
-    image_filename = sys.argv[1]
-    name, ext = os.path.splitext(image_filename)
-    output_filename = f"{name}_clusters.png"
-    plt.imsave(output_filename, image_colored)
-    print(f"Clustered image saved as: {output_filename}")
+    # Paint clusters on the image
+    image_colored = paint_clusters(image_bw, points, labels, cluster_count, color_marker)
+    save_image(image_colored) # Save the colored image
     
     plt.imshow(image_colored)
     plt.show()
