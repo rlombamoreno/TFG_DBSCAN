@@ -25,6 +25,7 @@ def load_std_scale():
         sys.exit(1)
     return std_scale
 
+@njit
 def compute_histogram(image):
     y_len, x_len = image.shape
     color_histogram = np.histogram(image, bins=[0, 1, 2])[0]
@@ -85,7 +86,6 @@ def dbscan(points, eps, min_pts):
 
 @njit
 def find_neighbors(point_index, points, eps):
-    # Primera pasada: contar vecinos
     count = 0
     for i in range(len(points)):
         if i != point_index:
@@ -94,7 +94,6 @@ def find_neighbors(point_index, points, eps):
             distance = np.sqrt(dx * dx + dy * dy)
             if distance <= eps:
                 count += 1
-    # Segunda pasada: guardar vecinos
     neighbors = np.empty(count, dtype=np.int64)
     idx = 0
     for i in range(len(points)):
@@ -143,19 +142,18 @@ def compute_kn_distances(points, k):
 
 def get_epsilon(points, k,std_scale):
     kn_distances = compute_kn_distances(points, k)
-    kn_distances = np.sort(kn_distances)[::1]
     epsilon = np.mean(kn_distances) + np.std(kn_distances) * std_scale
     print(f"Recommended epsilon: {epsilon}")
     return epsilon
 
-def paint_clusters(image, points, labels):
+def paint_clusters(image, points, labels,cluster_count):
     image_colored = np.zeros((*image.shape, 3), dtype=np.uint8)
 
     # labels puede contener -1 (noise). Obtenemos labels positivos ordenados.
     pos_mask = labels != -1
     pos_labels = np.unique(labels[pos_mask]) if np.any(pos_mask) else np.array([], dtype=np.int64)
 
-    if len(pos_labels) == 0:
+    if cluster_count == 0:
         # No hay clusters, devolver imagen en RGB (blanco/negro)
         bw = (image * 255).astype(np.uint8)
         return np.stack([bw, bw, bw], axis=-1)
@@ -193,7 +191,7 @@ if __name__ == "__main__":
     print(f"Number of clusters found: {cluster_count}")
     end = time.time()
     print("Final time = ", end - start)
-    image_colored = paint_clusters(image_bw, points, labels)
+    image_colored = paint_clusters(image_bw, points, labels, cluster_count)
     
     # Guardar la imagen coloreada
     image_filename = sys.argv[1]
