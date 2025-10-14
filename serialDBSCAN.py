@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from numba import njit
+from numba import jit
 import time
 import os
 
@@ -32,13 +32,13 @@ def save_image(image_colored):
     plt.imsave(output_filename, image_colored)
     print(f"Clustered image saved as: {output_filename}")
 
-@njit
+@jit(nopython=True)
 def compute_histogram(image):
     y_len, x_len = image.shape
     color_histogram = np.histogram(image, bins=[0, 1, 2])[0]
     return color_histogram
 
-@njit
+@jit(nopython=True)
 def get_points_in_cluster(image, color_marker):
     y_len, x_len = image.shape
     count = count_cluster_points(image, color_marker, y_len, x_len)
@@ -52,7 +52,7 @@ def get_points_in_cluster(image, color_marker):
                 point_index += 1
     return points
 
-@njit
+@jit(nopython=True)
 def count_cluster_points(image, color_marker, y_len, x_len):
     count = 0
     for y in range(y_len):
@@ -61,7 +61,7 @@ def count_cluster_points(image, color_marker, y_len, x_len):
                 count += 1
     return count
 
-@njit
+@jit(nopython=True)
 def dbscan_core(points, eps, min_pts, labels):
     cluster_id = 0
     for point_index in range(len(points)):
@@ -85,13 +85,13 @@ def dbscan_core(points, eps, min_pts, labels):
                 labels[point_index] = 0
     return labels, cluster_id
 
-@njit
+@jit(nopython=True)
 def dbscan(points, eps, min_pts):
     labels = np.zeros(len(points), dtype=np.int64) - 1
     labels, cluster_count= dbscan_core(points, eps, min_pts, labels)
     return labels,cluster_count
 
-@njit
+@jit(nopython=True)
 def find_neighbors(point_index, points, eps):
     count = 0
     for i in range(len(points)):
@@ -113,7 +113,7 @@ def find_neighbors(point_index, points, eps):
                 idx += 1
     return neighbors
 
-@njit
+@jit(nopython=True)
 def append_neighbors(neighbors, neighbors_aux):
     temp = np.empty(len(neighbors) + len(neighbors_aux), dtype=np.int64)
     count = 0
@@ -132,7 +132,7 @@ def append_neighbors(neighbors, neighbors_aux):
     return temp[:count]
 
 # Compute k-nearest neighbor distances
-@njit
+@jit(nopython=True)
 def compute_kn_distances(points, k):
     kn_distances = np.empty(len(points), dtype=np.float64)
     for i in range(len(points)):
@@ -142,10 +142,10 @@ def compute_kn_distances(points, k):
             if i != j:
                 dx = points[i][0] - points[j][0]
                 dy = points[i][1] - points[j][1]
-                eucl_dist[idx] = np.sqrt(dx * dx + dy * dy)
+                eucl_dist[idx] = (dx * dx + dy * dy)
                 idx += 1
         eucl_dist.sort()
-        kn_distances[i] = eucl_dist[k-1]
+        kn_distances[i] = np.sqrt(eucl_dist[k-1])
     return kn_distances
 
 def get_epsilon(points, k,std_scale):
@@ -170,7 +170,7 @@ def paint_clusters(image, points, labels, cluster_count, color_marker):
         return image_rgb
 
     # Separate noise and clusters
-    noise_mask = labels == -1
+    noise_mask = labels == 0
     cluster_mask = ~noise_mask
 
     # Paint noise in dark red or black (optional: use black for consistency)
@@ -211,6 +211,7 @@ if __name__ == "__main__":
     
     # Extract points from the image
     points = get_points_in_cluster(image_bw, color_marker)
+    print(f"Number of points extracted: {len(points)}")
     
     # Compute epsilon using k-NN distances
     eps = get_epsilon(points, k=5,std_scale=std_scale)
