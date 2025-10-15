@@ -122,44 +122,46 @@ def compute_kn_distances(points, k):
 
     threads_per_block = 256
     blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
-
-    kernel_code =  r'''
+    
+    MAX_K = k
+    kernel_code =  f'''
+    #define MAX_K {MAX_K}
+    
     extern "C" __global__
-    void compute_kn_distances(const int *points, double *kn_distances, const int num_points, const int k) {
+    void compute_kn_distances(const int *points, double *kn_distances, const int num_points, const int k) {{
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_points) {
+        if (idx < num_points) {{
             int x1 = points[idx * 2];
             int y1 = points[idx * 2 + 1];
-            double *min_dists = (double*)malloc(k * sizeof(double));
-            for (int i = 0; i < k; i++) {
+            double min_dists[MAX_K];
+            for (int i = 0; i < k; i++) {{
                 min_dists[i] = 1e20; // Valor grande
-            }
-            
-            for (int j = 0; j < num_points; j++) {
-                if (j != idx) {
+            }}
+
+            for (int j = 0; j < num_points; j++) {{
+                if (j != idx) {{
                     int x2 = points[j * 2];
                     int y2 = points[j * 2 + 1];
                     double dx = double(x1 - x2);
                     double dy = double(y1 - y2);
                     double dist = (dx * dx + dy * dy);
-                    if (dist < min_dists[k-1]) {
-                        for (int pos = 0; pos < k; pos++) {
-                            if (dist < min_dists[pos]) {
+                    if (dist < min_dists[k-1]) {{
+                        for (int pos = 0; pos < k; pos++) {{
+                            if (dist < min_dists[pos]) {{
                                 // Desplazar y insertar
-                                for (int m = k-1; m > pos; m--) {
+                                for (int m = k-1; m > pos; m--) {{
                                     min_dists[m] = min_dists[m-1];
-                                }
+                                }}
                                 min_dists[pos] = dist;
                                 break;
-                            }
-                        }
-                    }
-                }
-            }
+                            }}
+                        }}
+                    }}
+                }}
+            }}
             kn_distances[idx] = sqrt(min_dists[k-1]);
-            free(min_dists);
-        }
-    }
+        }}
+    }}
     '''
     module = cp.RawModule(code=kernel_code)
     compute_kn_distances_kernel = module.get_function('compute_kn_distances')
