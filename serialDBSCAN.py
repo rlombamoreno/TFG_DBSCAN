@@ -94,12 +94,13 @@ def dbscan(points, eps, min_pts):
 @jit(nopython=True)
 def find_neighbors(point_index, points, eps):
     count = 0
+    eps2 = eps * eps
     for i in range(len(points)):
         if i != point_index:
             dx = points[point_index][0] - points[i][0]
             dy = points[point_index][1] - points[i][1]
-            distance = np.sqrt(dx * dx + dy * dy)
-            if distance <= eps:
+            distance = (dx * dx + dy * dy)
+            if distance <= eps2:
                 count += 1
     neighbors = np.empty(count, dtype=np.int64)
     idx = 0
@@ -107,8 +108,8 @@ def find_neighbors(point_index, points, eps):
         if i != point_index:
             dx = points[point_index][0] - points[i][0]
             dy = points[point_index][1] - points[i][1]
-            distance = np.sqrt(dx * dx + dy * dy)
-            if distance <= eps:
+            distance = (dx * dx + dy * dy)
+            if distance <= eps2:
                 neighbors[idx] = i
                 idx += 1
     return neighbors
@@ -136,16 +137,21 @@ def append_neighbors(neighbors, neighbors_aux):
 def compute_kn_distances(points, k):
     kn_distances = np.empty(len(points), dtype=np.float64)
     for i in range(len(points)):
-        eucl_dist = np.empty(len(points)-1, dtype=np.float64)
-        idx = 0
+        eucl_distance= np.full(k,1e20, dtype=np.float64)
         for j in range(len(points)):
             if i != j:
                 dx = points[i][0] - points[j][0]
                 dy = points[i][1] - points[j][1]
-                eucl_dist[idx] = (dx * dx + dy * dy)
-                idx += 1
-        eucl_dist.sort()
-        kn_distances[i] = np.sqrt(eucl_dist[k-1])
+                dist = (dx * dx + dy * dy)
+                if(dist < eucl_distance[k-1]):
+                    for pos in range(k):
+                        if(dist < eucl_distance[pos]):
+                            for m in range(k-1, pos, -1):
+                                eucl_distance[m] = eucl_distance[m-1]
+                            eucl_distance[pos] = dist
+                            break
+                
+        kn_distances[i] = np.sqrt(eucl_distance[k-1])
     return kn_distances
 
 def get_epsilon(points, k,std_scale):
@@ -212,18 +218,21 @@ if __name__ == "__main__":
     # Extract points from the image
     points = get_points_in_cluster(image_bw, color_marker)
     print(f"Number of points extracted: {len(points)}")
-    
+    timePoints = time.time() # Time after points extraction
+    print("TimePoints = ", timePoints - start)
+
     # Compute epsilon using k-NN distances
     eps = get_epsilon(points, k=5,std_scale=std_scale)
     timeEpsilon = time.time() # Time after epsilon calculation
-    print("TimeEpsilon = ", timeEpsilon - start)
-    
+    print("TimeEpsilon = ", timeEpsilon - timePoints)
+
     # Run DBSCAN
     labels,cluster_count = dbscan(points, eps, min_pts=5)
     print(f"Number of clusters found: {cluster_count}")
     
     # End timing
     end = time.time()
+    print("TimeDBSCAN = ", end - timeEpsilon)
     print("Final time = ", end - start)
     
     # Paint clusters on the image

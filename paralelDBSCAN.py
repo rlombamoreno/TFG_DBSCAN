@@ -210,6 +210,9 @@ if __name__ == "__main__":
     points_cpu = cp.asnumpy(points)
     print(f"Number of points to cluster: {len(points_cpu)//2}")
     
+    timePoints = time.time() # Time after points extraction
+    print("TimePoints = ", timePoints - start)
+    
     eps = get_epsilon(points, k=5,std_scale=std_scale)
     timeEpsilon = time.time() # Time after epsilon calculation
     print("TimeEpsilon = ", timeEpsilon - start)
