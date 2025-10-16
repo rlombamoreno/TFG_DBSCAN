@@ -8,20 +8,21 @@ import os
 
 def load_image():
     if len(sys.argv) < 2:
-        print("serialDBSCAN: Must specify one image filename")
-        print("example: python3 serialDBSCAN filename.jpg")
+        print("cpu_dbscan: Must specify one image filename")
+        print("example: python3 cpu_dbscan filename.jpg")
         sys.exit(1)
     image_filename = sys.argv[1]
     image_orig = Image.open(image_filename)
+    print(f"cpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
     return np.array(image_orig.convert('1'), dtype=int)
 
 def load_std_scale():
     if len(sys.argv) != 3:
-        print("serialDBSCAN: Using default std_scale=1")
+        print("cpu_dbscan: Using default std_scale=1")
         return 1.00
     std_scale = float(sys.argv[2])
     if std_scale < 0 or std_scale > 1:
-        print("serialDBSCAN: std_scale must be between 0 and 1")
+        print("cpu_dbscan: std_scale must be between 0 and 1")
         sys.exit(1)
     return std_scale
 
@@ -30,7 +31,7 @@ def save_image(image_colored):
     name, ext = os.path.splitext(image_filename)
     output_filename = f"{name}_clusters_CPU.png"
     plt.imsave(output_filename, image_colored)
-    print(f"Clustered image saved as: {output_filename}")
+    print(f"cpu_dbscan: Clustered image saved as: {output_filename}")
 
 @jit(nopython=True)
 def compute_histogram(image):
@@ -158,7 +159,7 @@ def get_epsilon(points, k,std_scale):
     kn_distances = compute_kn_distances(points, k) # k-distances
     # Heuristic: epsilon = mean + std_dev * std_scale
     epsilon = np.mean(kn_distances) + np.std(kn_distances) * std_scale
-    print(f"Recommended epsilon: {epsilon}")
+    print(f"cpu_dbscan: Recommended epsilon: {epsilon}")
     return epsilon
 
 def paint_clusters(image, points, labels, cluster_count, color_marker):
@@ -204,6 +205,8 @@ def paint_clusters(image, points, labels, cluster_count, color_marker):
 
 
 if __name__ == "__main__":
+    print("cpu_dbscan: Starting CPU DBSCAN clustering")
+    
     # Start timing
     start = time.time()
     
@@ -217,24 +220,24 @@ if __name__ == "__main__":
     
     # Extract points from the image
     points = get_points_in_cluster(image_bw, color_marker)
-    print(f"Number of points extracted: {len(points)}")
+    print(f"cpu_dbscan: Number of points extracted: {len(points)}")
     timePoints = time.time() # Time after points extraction
-    print("TimePoints = ", timePoints - start)
+    print("cpu_dbscan: TimePoints = ", timePoints - start)
 
     # Compute epsilon using k-NN distances
     eps = get_epsilon(points, k=5,std_scale=std_scale)
     timeEpsilon = time.time() # Time after epsilon calculation
-    print("TimeEpsilon = ", timeEpsilon - timePoints)
+    print("cpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
     # Run DBSCAN
     labels,cluster_count = dbscan(points, eps, min_pts=5)
-    print(f"Number of clusters found: {cluster_count}")
-    
+    print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
+
     # End timing
     end = time.time()
-    print("TimeDBSCAN = ", end - timeEpsilon)
-    print("Final time = ", end - start)
-    
+    print("cpu_dbscan: TimeDBSCAN = ", end - timeEpsilon)
+    print("cpu_dbscan: Final time = ", end - start)
+
     # Paint clusters on the image
     image_colored = paint_clusters(image_bw, points, labels, cluster_count, color_marker)
     save_image(image_colored) # Save the colored image

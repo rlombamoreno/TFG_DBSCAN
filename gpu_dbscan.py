@@ -9,29 +9,30 @@ import os
 
 def load_image():
     if len(sys.argv) < 2:
-        print("serialDBSCAN: Must specify one image filename")
-        print("example: python3 serialDBSCAN filename.jpg")
+        print("gpu_dbscan: Must specify one image filename")
+        print("example: python3 gpu_dbscan filename.jpg")
         sys.exit(1)
     image_filename = sys.argv[1]
     image_orig = Image.open(image_filename)
+    print(f"gpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
     return cp.array(image_orig.convert('1'), dtype=int)
 
 def load_std_scale():
     if len(sys.argv) != 3:
-        print("serialDBSCAN: Using default std_scale=1")
+        print("gpu_dbscan: Using default std_scale=1")
         return 1.00
     std_scale = float(sys.argv[2])
     if std_scale < 0 or std_scale > 1:
-        print("serialDBSCAN: std_scale must be between 0 and 1")
+        print("gpu_dbscan: std_scale must be between 0 and 1")
         sys.exit(1)
     return std_scale
 
 def save_image(image_colored):
     image_filename = sys.argv[1]
     name, ext = os.path.splitext(image_filename)
-    output_filename = f"{name}_clusters_CPU.png"
+    output_filename = f"{name}_clusters_GPU.png"
     plt.imsave(output_filename, image_colored)
-    print(f"Clustered image saved as: {output_filename}")
+    print(f"gpu_dbscan: Clustered image saved as: {output_filename}")
     
 def compute_histogram(image):
     y_len, x_len = image.shape
@@ -112,7 +113,7 @@ def get_epsilon(points, k,std_scale):
     kn_distances = compute_kn_distances(points, k) # k-distances
     # Heuristic: epsilon = mean + std_dev * std_scale
     epsilon = cp.mean(kn_distances) + cp.std(kn_distances) * std_scale
-    print(f"Recommended epsilon: {float(epsilon)}")
+    print(f"gpu_dbscan: Recommended epsilon: {float(epsilon)}")
     return epsilon
 
 def compute_kn_distances(points, k):
@@ -196,6 +197,8 @@ def compute_kn_distances(points, k):
     
 
 if __name__ == "__main__":
+    print("gpu_dbscan: Starting GPU DBSCAN clustering")
+
     # Start timing
     start = time.time()
 
@@ -210,14 +213,14 @@ if __name__ == "__main__":
     # Extract points from the image
     points = get_points_in_cluster(image_bw, color_marker)
     points_cpu = cp.asnumpy(points)
-    print(f"Number of points to cluster: {len(points_cpu)//2}")
+    print(f"gpu_dbscan: Number of points to cluster: {len(points_cpu)//2}")
     
     timePoints = time.time() # Time after points extraction
-    print("TimePoints = ", timePoints - start)
+    print("gpu_dbscan: TimePoints = ", timePoints - start)
     
     eps = get_epsilon(points, k=5,std_scale=std_scale)
     timeEpsilon = time.time() # Time after epsilon calculation
-    print("TimeEpsilon = ", timeEpsilon - start)
+    print("gpu_dbscan: TimeEpsilon = ", timeEpsilon - start)
     
     # labels,cluster_count = dbscan(points, eps, min_pts=5)
     # print(f"Number of clusters found: {cluster_count}")
