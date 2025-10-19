@@ -95,7 +95,7 @@ def dbscan(points, eps, min_pts):
 @jit(nopython=True)
 def find_neighbors(point_index, points, eps):
     count = 0
-    eps2 = eps * eps
+    eps2 = np.float64(eps) * np.float64(eps)
     for i in range(len(points)):
         if i != point_index:
             dx = points[point_index][0] - points[i][0]

@@ -186,24 +186,25 @@ def dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, ad
             cluster_id += 1
     return  cluster_id
 
+
+
 def expand_cluster_gpu(points, point_index, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts):
     num_points = len(points) // 2
     
     current_border_points = cp.zeros(num_points, dtype=cp.int32)
     next_border_points = cp.zeros(num_points, dtype=cp.int32)
-    visited = cp.zeros(num_points, dtype=cp.int32)
     
     current_border_points[point_index] = 1
     
     while cp.any(current_border_points).get():
 
-        expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, visited, cluster_id, labels, min_pts)
-        cp.cuda.Stream.null.synchronize()
+        expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, cluster_id, labels, min_pts)
+        cp.cuda.Device().synchronize()
         
         current_border_points, next_border_points = next_border_points, current_border_points
         next_border_points.fill(0)
 
-def expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, visited, cluster_id, labels, min_pts):
+def expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, cluster_id, labels, min_pts):
     num_points = len(points) // 2
 
     threads_per_block = 256
@@ -211,21 +212,17 @@ def expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_
     kernel_code =  r'''
     extern "C" __global__
     void expand_cluster_kernel(const int *vector_degree, const int *adjacent_indexes, const int *adjacent_list, 
-                                int *current_border_points, int *next_border_points, int *visited, const int num_points, const int cluster_id, int *labels, const int min_pts) {
+                                int *current_border_points, int *next_border_points, const int num_points, const int cluster_id, int *labels, const int min_pts) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx < num_points) {
             if (current_border_points[idx] == 1) {
-                
-                atomicAdd(&visited[idx], 1);
-                labels[idx] = cluster_id;
-                
-                int start_idx = adjacent_indexes[idx];
-                int degree = vector_degree[idx];
-                if(degree >= min_pts) {
-                    for (int j = start_idx; j < start_idx + degree; j++) {
-                        int neighbor = adjacent_list[j];
-                        int neighbor_visited = atomicOr((int*)&visited[neighbor], 0);
-                        if (neighbor_visited == 0) {
+                int old_label = atomicCAS(&labels[idx], -1, cluster_id);
+                if (old_label == -1) {
+                    int start_idx = adjacent_indexes[idx];
+                    int degree = vector_degree[idx];
+                    if(degree + 1 >= min_pts) { // Only expand if core point
+                        for (int j = start_idx; j < start_idx + degree; j++) {
+                            int neighbor = adjacent_list[j];
                             atomicMax(&next_border_points[neighbor], 1);
                         }
                     }
@@ -236,14 +233,14 @@ def expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_
     '''
     module = cp.RawModule(code=kernel_code)
     expand_cluster_kernel_func = module.get_function('expand_cluster_kernel')
-    expand_cluster_kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, visited, num_points, cluster_id, labels,min_pts))
+    expand_cluster_kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, num_points, cluster_id, labels,min_pts))
     
 
 def build_graph(points, eps,min_pts):
     num_points = len(points) // 2
     
     vector_degree = cp.zeros(num_points, dtype=cp.int32) # Vertices degree
-    vector_type = cp.zeros(num_points, dtype=cp.int8) # Vertex type: core or not
+    vector_type = cp.zeros(num_points, dtype=cp.int32) # Vertex type: core or not
     vector_degree,vector_type = neigbours_count(points, eps, vector_degree, vector_type,min_pts)
     
     # Calcular adjacent_indexes usando prefix sum excluyente
@@ -278,8 +275,8 @@ def neigbours_count(points, eps, vector_degree, vector_type, min_pts):
                 if (j == idx) continue; // Skip self-loop
                 int x2 = points[j * 2];
                 int y2 = points[j * 2 + 1];
-                double dx = (double) x1 - x2;
-                double dy = (double) y1 - y2;
+                double dx = (double) x2 - x1;
+                double dy = (double) y2 - y1;
                 double distance = (dx * dx + dy * dy);
                 if (distance <= eps2) {{
                     count++;
@@ -328,8 +325,8 @@ def build_adjacency_list_from_indexes(points, eps, vector_degree, adjacent_index
                 if (j == idx) continue; // Skip self-loop
                 int x2 = points[j * 2];
                 int y2 = points[j * 2 + 1];
-                double dx = (double) x1 - x2;
-                double dy = (double) y1 - y2;
+                double dx = (double) x2 - x1;
+                double dy = (double) y2 - y1;
                 double distance = (dx * dx + dy * dy);
                 
                 if (distance <= eps2) {{
@@ -427,6 +424,10 @@ if __name__ == "__main__":
     
     # Extract points from the image
     points = get_points_in_cluster(image_bw, color_marker)
+    points = points.reshape(-1, 2)
+    points = points[cp.lexsort(cp.stack((points[:,1], points[:,0])))]
+    points = points.ravel()
+
     points_cpu = cp.asnumpy(points)
     print(f"gpu_dbscan: Number of points to cluster: {len(points_cpu)//2}")
     
