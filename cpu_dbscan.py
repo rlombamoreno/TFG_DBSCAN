@@ -3,18 +3,57 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from numba import jit
+import netCDF4 as nc
 import time
 import os
 
-def load_image():
+def load_data():
     if len(sys.argv) < 2:
-        print("cpu_dbscan: Must specify one image filename")
-        print("example: python3 cpu_dbscan filename.jpg")
+        print("cpu_dbscan: Must specify one supported file, either image or netCDF")
+        print("example: python3 script.py <filename> [std_scale]")
         sys.exit(1)
-    image_filename = sys.argv[1]
+    std = load_std_scale()
+    filename = sys.argv[1]
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == ".jpg" or ext == ".png":
+        return load_image(filename), std
+    elif ext == ".nc":
+        return load_netcdf(filename), std
+    else:
+        print(f"cpu_dbscan: Unsupported file extension: {ext}")
+        sys.exit(1)
+
+def load_netcdf(netcdf_filename):
+    ncdata = nc.Dataset(netcdf_filename)
+    frame = 1
+    atoms = ncdata.variables['coordinates'][:][frame]
+    ncdata.close()
+    
+    # Convertir a array regular si es masked array
+    if np.ma.isMaskedArray(atoms):
+        atoms = np.ma.filled(atoms, fill_value=np.nan)
+    r = atoms.transpose()
+    points = points_to_array(r)
+    return points
+
+def points_to_array(r):
+    x = r[0]
+    y = r[1]
+    points = np.zeros((len(x), 2), dtype=np.float32)
+    for i in range(len(x)):
+        points[i, 0] = float(x[i])
+        points[i, 1] = float(y[i])
+    return points
+
+def load_image(image_filename):
     image_orig = Image.open(image_filename)
     print(f"cpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
-    return np.array(image_orig.convert('1'), dtype=int)
+    image_bw = np.array(image_orig.convert('1'), dtype=int)
+    hist = compute_histogram(image_bw)
+    hist = compute_histogram(image_bw)
+    color_marker = 1 if hist[0] < hist[1] else 0
+    points = get_points_in_cluster(image_bw, color_marker)
+    return points
 
 def load_std_scale():
     if len(sys.argv) != 3:
@@ -210,16 +249,8 @@ if __name__ == "__main__":
     # Start timing
     start = time.time()
     
-    # Load image and std_scale
-    image_bw = load_image()
-    std_scale=load_std_scale()
-    
-    # Determine color marker based on histogram
-    hist = compute_histogram(image_bw)
-    color_marker = 1 if hist[0] < hist[1] else 0
-    
-    # Extract points from the image
-    points = get_points_in_cluster(image_bw, color_marker)
+    # Extract data
+    points, std_scale = load_data()
     print(f"cpu_dbscan: Number of points extracted: {len(points)}")
     timePoints = time.time() # Time after points extraction
     print("cpu_dbscan: TimePoints = ", timePoints - start)
@@ -239,8 +270,8 @@ if __name__ == "__main__":
     print("cpu_dbscan: Final time = ", end - start)
 
     # Paint clusters on the image
-    image_colored = paint_clusters(image_bw, points, labels, cluster_count, color_marker)
-    save_image(image_colored) # Save the colored image
+    # image_colored = paint_clusters(image_bw, points, labels, cluster_count, color_marker)
+    # save_image(image_colored) # Save the colored image
     
-    plt.imshow(image_colored)
-    plt.show()
+    # plt.imshow(image_colored)
+    # plt.show()

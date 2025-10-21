@@ -169,72 +169,74 @@ def compute_kn_distances(points, k):
     compute_kn_distances_kernel((blocks_per_grid,), (threads_per_block,), (points, kn_distances, num_points, k))
     return kn_distances
 
-def dbscan(points, eps, min_pts):
+def dbscan(points, eps, min_pts,timeEpsilon):
     num_points = len(points) // 2
     vector_degree, vector_type, adjacent_indexes, adjacent_list = build_graph(points, eps,min_pts)
+    timeGraph = time.time() # Time after graph building
+    print("gpu_dbscan: TimeGraph = ", timeGraph - timeEpsilon)
     labels = cp.full(num_points, -1, dtype=cp.int32) 
     cluster_count= dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts)
+    print("gpu_dbscan: TimeDBSCAN = ", time.time() - timeGraph)
     return cp.asnumpy(labels), cluster_count
 
 def dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts):
     cluster_id = 0
     num_points = len(points) // 2
     
-    for i in range(num_points):
-        if vector_type[i] == 1 and labels[i] == -1: # Not visited and is core
-            expand_cluster_gpu(points, i, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts)
-            cluster_id += 1
-    return  cluster_id
-
-
-
-def expand_cluster_gpu(points, point_index, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts):
-    num_points = len(points) // 2
+    kernel_func = define_expand_cluster_kernel_gpu()
+    
+    threads_per_block = 256
+    blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
+    
+    core_points = cp.where(vector_type == 1)[0].get()
     
     current_border_points = cp.zeros(num_points, dtype=cp.int32)
     next_border_points = cp.zeros(num_points, dtype=cp.int32)
-    
-    current_border_points[point_index] = 1
-    
-    while cp.any(current_border_points).get():
 
-        expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, cluster_id, labels, min_pts)
-        cp.cuda.Device().synchronize()
-        
-        current_border_points, next_border_points = next_border_points, current_border_points
-        next_border_points.fill(0)
+    for i in core_points:
+        if int(labels[i]) == -1: # Not visited and is core
+            expand_cluster_gpu(points, i, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,current_border_points,next_border_points,blocks_per_grid,threads_per_block)
+            current_border_points.fill(0)
+            next_border_points.fill(0)
+            cluster_id += 1
+    return  cluster_id
 
-def expand_cluster_kernel_gpu(points, vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, cluster_id, labels, min_pts):
-    num_points = len(points) // 2
-
-    threads_per_block = 256
-    blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
+def define_expand_cluster_kernel_gpu():
     kernel_code =  r'''
     extern "C" __global__
     void expand_cluster_kernel(const int *vector_degree, const int *adjacent_indexes, const int *adjacent_list, 
                                 int *current_border_points, int *next_border_points, const int num_points, const int cluster_id, int *labels, const int min_pts) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx < num_points) {
-            if (current_border_points[idx] == 1) {
-                int old_label = atomicCAS(&labels[idx], -1, cluster_id);
-                if (old_label == -1) {
-                    int start_idx = adjacent_indexes[idx];
-                    int degree = vector_degree[idx];
-                    if(degree + 1 >= min_pts) { // Only expand if core point
-                        for (int j = start_idx; j < start_idx + degree; j++) {
-                            int neighbor = adjacent_list[j];
-                            atomicMax(&next_border_points[neighbor], 1);
-                        }
+            if (current_border_points[idx] == 1 && labels[idx] == -1) {
+                labels[idx] = cluster_id;           
+                int start_idx = adjacent_indexes[idx];
+                int degree = vector_degree[idx];
+                if(degree + 1 >= min_pts) { // Only expand if core point
+                    for (int j = start_idx; j < start_idx + degree; j++) {
+                        int neighbor = adjacent_list[j];
+                        atomicMax(&next_border_points[neighbor], 1);
                     }
-                }
+                }    
             }
         }
     }
     '''
     module = cp.RawModule(code=kernel_code)
     expand_cluster_kernel_func = module.get_function('expand_cluster_kernel')
-    expand_cluster_kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, num_points, cluster_id, labels,min_pts))
+    return expand_cluster_kernel_func
+
+def expand_cluster_gpu(points, point_index, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,current_border_points,next_border_points,blocks_per_grid,threads_per_block):
+
+    current_border_points[point_index] = 1
     
+    while cp.sum(current_border_points) != 0:
+
+        kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, num_points, cluster_id, labels,min_pts))
+        
+        current_border_points, next_border_points = next_border_points, current_border_points
+        next_border_points[:] = 0 
+
 
 def build_graph(points, eps,min_pts):
     num_points = len(points) // 2
@@ -438,14 +440,13 @@ if __name__ == "__main__":
     timeEpsilon = time.time() # Time after epsilon calculation
     print("gpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
-    labels,cluster_count = dbscan(points, eps, min_pts=5)
+    labels,cluster_count = dbscan(points, eps, min_pts=5,timeEpsilon=timeEpsilon)
     print(f"Number of clusters found: {cluster_count}")
     
     # End timing
     end = time.time()
-    print("cpu_dbscan: TimeDBSCAN = ", end - timeEpsilon)
-    print("cpu_dbscan: Final time = ", end - start)
-    
+    print("gpu_dbscan: Final time = ", end - start)
+
     # Paint clusters on the image
     image_colored = paint_clusters(image_bw, points_cpu, labels, cluster_count, color_marker)
     save_image(image_colored) # Save the colored image
