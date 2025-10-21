@@ -184,20 +184,19 @@ def dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, ad
     num_points = len(points) // 2
     
     kernel_func = define_expand_cluster_kernel_gpu()
-    
+
     threads_per_block = 256
     blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
     
-    core_points = cp.where(vector_type == 1)[0].get()
+    core_points_cpu = cp.asnumpy(cp.where(vector_type == 1)[0])
     
-    current_border_points = cp.zeros(num_points, dtype=cp.int32)
-    next_border_points = cp.zeros(num_points, dtype=cp.int32)
-
-    for i in core_points:
-        if int(labels[i]) == -1: # Not visited and is core
-            expand_cluster_gpu(points, i, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,current_border_points,next_border_points,blocks_per_grid,threads_per_block)
-            current_border_points.fill(0)
-            next_border_points.fill(0)
+    border_points = cp.zeros(num_points, dtype=cp.int32)
+    active_flag = cp.zeros(1, dtype=cp.int32)
+    
+    for idx in core_points_cpu:
+        if int(labels[idx]) == -1: # Not visited and is core
+            expand_cluster_gpu(points, idx, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,border_points,blocks_per_grid,threads_per_block,active_flag)
+            border_points[:] = 0
             cluster_id += 1
     return  cluster_id
 
@@ -205,19 +204,20 @@ def define_expand_cluster_kernel_gpu():
     kernel_code =  r'''
     extern "C" __global__
     void expand_cluster_kernel(const int *vector_degree, const int *adjacent_indexes, const int *adjacent_list, 
-                                int *current_border_points, int *next_border_points, const int num_points, const int cluster_id, int *labels, const int min_pts) {
+                                int *border_points, const int num_points, const int cluster_id, int *labels, const int min_pts, int *active_flag) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx < num_points) {
-            if (current_border_points[idx] == 1 && labels[idx] == -1) {
+            if (border_points[idx] != 0 && labels[idx] == -1) {
                 labels[idx] = cluster_id;           
                 int start_idx = adjacent_indexes[idx];
                 int degree = vector_degree[idx];
                 if(degree + 1 >= min_pts) { // Only expand if core point
+                    *active_flag = 1;
                     for (int j = start_idx; j < start_idx + degree; j++) {
                         int neighbor = adjacent_list[j];
-                        atomicMax(&next_border_points[neighbor], 1);
+                        border_points[neighbor] = 1;
                     }
-                }    
+                }
             }
         }
     }
@@ -226,16 +226,15 @@ def define_expand_cluster_kernel_gpu():
     expand_cluster_kernel_func = module.get_function('expand_cluster_kernel')
     return expand_cluster_kernel_func
 
-def expand_cluster_gpu(points, point_index, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,current_border_points,next_border_points,blocks_per_grid,threads_per_block):
-
-    current_border_points[point_index] = 1
+def expand_cluster_gpu(points, point_index, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,border_points,blocks_per_grid,threads_per_block,active_flag):
+    border_points[point_index] = 1
     
-    while cp.sum(current_border_points) != 0:
-
-        kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, current_border_points, next_border_points, num_points, cluster_id, labels,min_pts))
-        
-        current_border_points, next_border_points = next_border_points, current_border_points
-        next_border_points[:] = 0 
+    while True:
+        active_flag[0] = 0
+        kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, border_points, num_points, cluster_id, labels,min_pts,active_flag))
+        if active_flag[0] == 0:
+            break
+    
 
 
 def build_graph(points, eps,min_pts):

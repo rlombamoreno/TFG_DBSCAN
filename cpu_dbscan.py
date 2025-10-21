@@ -36,6 +36,7 @@ def load_netcdf(netcdf_filename):
     points = points_to_array(r)
     return points
 
+@jit(nopython=True)
 def points_to_array(r):
     x = r[0]
     y = r[1]
@@ -261,7 +262,7 @@ if __name__ == "__main__":
     print("cpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
     # Run DBSCAN
-    labels,cluster_count = dbscan(points, eps, min_pts=5)
+    labels,cluster_count = dbscan(points,5.25, min_pts=5)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
 
     # End timing
