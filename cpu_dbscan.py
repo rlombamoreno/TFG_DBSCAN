@@ -22,10 +22,10 @@ Usage:
                          epsilon heuristic. If omitted, std_scale defaults to 1.0.
 
 Dependencies:
-    - numpy >= 1.20
-    - pillow >= 9.0.0
-    - matplotlib >= 3.5
-    - netCDF4 >= 1.5.8
+    - numpy
+    - pillow
+    - matplotlib
+    - netCDF4
     - numba
     - time, os, sys
 """
