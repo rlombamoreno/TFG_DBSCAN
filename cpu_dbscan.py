@@ -1,3 +1,35 @@
+"""
+cpu_dbscan.py
+-------------
+CPU implementation of the DBSCAN algorithm optimized with NumPy.
+
+Author: Rodrigo Lomba  
+Institution: Universidad Politécnica de Madrid  
+Date: October 2025  
+Version: 1.0
+
+Description:
+This script implements the DBSCAN algorithm for image segmentation using
+vectorized NumPy operations and an adaptive epsilon calculation method.
+It supports input from common image files (JPEG/PNG) and NetCDF files
+(containing coordinate arrays).
+
+Usage:
+    python3 cpu_dbscan.py <input_filename> [std_scale]
+
+    - <input_filename> : Path to an image (.jpg, .png) or a NetCDF (.nc) file.
+    - [std_scale]      : Optional float in [0, 1] used to scale the std in the
+                         epsilon heuristic. If omitted, std_scale defaults to 1.0.
+
+Dependencies:
+    - numpy >= 1.20
+    - pillow >= 9.0.0
+    - matplotlib >= 3.5
+    - netCDF4 >= 1.5.8
+    - numba
+    - time, os, sys
+"""
+
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,6 +40,7 @@ import time
 import os
 
 MIN_POINTS = 5
+INF = 1e20
 
 def load_data():
     if len(sys.argv) < 2:
@@ -38,7 +71,7 @@ def load_netcdf(netcdf_filename):
     points = points_to_array(r)
     return points
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def points_to_array(r):
     x = r[0]
     y = r[1]
@@ -75,13 +108,13 @@ def save_image(image_colored):
     plt.imsave(output_filename, image_colored)
     print(f"cpu_dbscan: Clustered image saved as: {output_filename}")
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def compute_histogram(image):
     y_len, x_len = image.shape
     color_histogram = np.histogram(image, bins=[0, 1, 2])[0]
     return color_histogram
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def get_points_in_cluster(image, color_marker):
     y_len, x_len = image.shape
     count = count_cluster_points(image, color_marker, y_len, x_len)
@@ -95,7 +128,7 @@ def get_points_in_cluster(image, color_marker):
                 point_index += 1
     return points
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def count_cluster_points(image, color_marker, y_len, x_len):
     count = 0
     for y in range(y_len):
@@ -115,7 +148,7 @@ def dbscan(points, eps,timeEpsilon, min_pts):
     print("cpu_dbscan: TimeDBSCAN = ", time.time() - timeGraph)
     return labels,cluster_count
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def build_graph(points, eps, graph,min_pts):
     vector_type = np.zeros(len(points), dtype=np.int32)-1
     count_tot = neighbor_count(points, eps, vector_type, graph,min_pts)
@@ -134,7 +167,7 @@ def build_graph(points, eps, graph,min_pts):
                     index += 1
     return vector_type, adjacent_list
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def neighbor_count(points, eps, vector_type, graph,min_pts):
     count_tot = 0
     for i in range(len(points)):
@@ -153,7 +186,7 @@ def neighbor_count(points, eps, vector_type, graph,min_pts):
         count_tot += count
     return count_tot
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def dbscan_core(points, eps, min_pts, labels, vector_type, adjacent_list, graph):
     cluster_id = 0
     border_points = np.zeros(len(points), dtype=np.int32)
@@ -183,11 +216,11 @@ def dbscan_core(points, eps, min_pts, labels, vector_type, adjacent_list, graph)
 
 
 # Compute k-nearest neighbor distances
-@jit(nopython=True)
+#@jit(nopython=True)
 def compute_kn_distances(points, k):
     kn_distances = np.empty(len(points), dtype=np.float64)
     for i in range(len(points)):
-        eucl_distance= np.full(k,1e20, dtype=np.float64)
+        eucl_distance= np.full(k,INF, dtype=np.float64)
         for j in range(len(points)):
             if i != j:
                 dx = points[i][0] - points[j][0]
