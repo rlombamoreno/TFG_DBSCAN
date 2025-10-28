@@ -3,7 +3,7 @@ cpu_dbscan.py
 -------------
 CPU implementation of the DBSCAN algorithm optimized with NumPy.
 
-Author: Rodrigo Lomba  
+Author: Rodrigo Lomba Moreno
 Institution: Universidad Politécnica de Madrid  
 Date: October 2025  
 Version: 1.0
@@ -104,9 +104,13 @@ def load_image(image_filename):
     
     image_orig = Image.open(image_filename)
     print(f"cpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
+    
     image_bw = np.array(image_orig.convert('1'), dtype=int)
     hist = compute_histogram(image_bw)
+    
+    # color_marker indicates the background color; get_points_in_cluster extracts only foreground pixels
     color_marker = 1 if hist[0] < hist[1] else 0
+    
     points = get_points_in_cluster(image_bw, color_marker)
     return points
 
@@ -226,6 +230,7 @@ def compute_kn_distances(points, k):
     
     kn_distances = np.empty(len(points), dtype=np.float64)
     for i in range(len(points)):
+        # Maintain a sorted array of the k smallest distances for the current point
         eucl_distance= np.full(k,INF, dtype=np.float64)
         for j in range(len(points)):
             if i != j:
@@ -279,22 +284,24 @@ def neighbor_count(points, epsilon, is_core_point, adjacency_info, min_pts):
         int: Total number of neighbors across all points
     """
     
-    count_total_neighbours = 0
+    count_total_neighbors = 0
     for i in range(len(points)):
         count = 0
-        epsilon2 = np.float64(epsilon) * np.float64(epsilon)
+        # squared_epsilon is the squared epsilon to avoid computing square roots
+        squared_epsilon = np.float64(epsilon) * np.float64(epsilon)
         for j in range(len(points)):
             if i != j:
                 dx = points[i][0] - points[j][0]
                 dy = points[i][1] - points[j][1]
                 distance = (dx * dx + dy * dy)
-                if distance <= epsilon2:
+                if distance <= squared_epsilon:
                     count += 1
         adjacency_info[i][0] = count 
-        if count + 1 >= min_pts :
-            is_core_point[i] = 1   
-        count_total_neighbours += count
-    return count_total_neighbours
+        # mark the point as core if it has enough neighbors
+        if count + 1 >= min_pts:
+            is_core_point[i] = 1
+        count_total_neighbors += count
+    return count_total_neighbors
 
 
 @jit(nopython=True)
@@ -316,6 +323,7 @@ def build_adjacency_info(points, epsilon, adjacency_info,min_pts):
     
     is_core_point = np.zeros(len(points), dtype=np.int32)-1
     count_total_neigbours = neighbor_count(points, epsilon, is_core_point, adjacency_info,min_pts)
+    # compute the starting index in the flattened neighbor array for each point
     adjacency_info[1:,1] = np.cumsum(adjacency_info[:-1,0])
     adjacent_list = np.zeros(count_total_neigbours, dtype=np.int32)
     index = 0
@@ -327,6 +335,7 @@ def build_adjacency_info(points, epsilon, adjacency_info,min_pts):
                 dy = points[i][1] - points[j][1]
                 distance = (dx * dx + dy * dy)
                 if distance <= epsilon2:
+                    # fill the flattened neighbor list with indices of neighbors for all points
                     adjacent_list[index] = j
                     index += 1
     return is_core_point, adjacent_list
@@ -355,6 +364,7 @@ def dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, 
     active_flag = 0;
     for point_index in range(len(points)):
         if labels[point_index] == -1 and is_core_point[point_index] == 1:
+            # Expand the cluster starting from a core point; border_points marks the active frontier
             border_points[point_index] = 1
             while True:
                 active_flag = 0
@@ -365,6 +375,7 @@ def dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, 
                         degree = adjacency_info[i][0]
                         neighbors_time_end = neighbor_start + degree
                         if is_core_point[i] == 1:
+                            # extract the neighbors of the current point from the flattened adjacency list
                             neighbors = adjacent_list[neighbor_start:neighbors_time_end]
                             active_flag = 1
                             for j in range(len(neighbors)):
@@ -393,11 +404,11 @@ def dbscan(points, epsilon,time_epsilon, min_pts):
     
     adjacency_info = np.zeros((len(points), 2), dtype=np.int32)
     is_core_point, adjacent_list = build_adjacency_info(points, epsilon, adjacency_info,min_pts)
-    time_adjacency_info = time.time()
+    time_adjacency_info = time.perf_counter()
     print("cpu_dbscan: Time graph construction = ", time_adjacency_info - time_epsilon)
     labels = np.zeros(len(points), dtype=np.int32) - 1
     cluster_count = dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, adjacency_info)
-    print("cpu_dbscan: Time DBSCAN = ", time.time() - time_adjacency_info)
+    print("cpu_dbscan: Time DBSCAN = ", time.perf_counter() - time_adjacency_info)
     return labels,cluster_count
 
 
@@ -453,22 +464,22 @@ if __name__ == "__main__":
     print("cpu_dbscan: time_starting CPU DBSCAN clustering")
     
     
-    time_start = time.time()
+    time_start = time.perf_counter()
     points, std_scale = load_data()
     print(f"cpu_dbscan: Number of points extracted: {len(points)}")
-    time_points_extracted = time.time()
+    time_points_extracted = time.perf_counter()
     print("cpu_dbscan: time points extracted = ", time_points_extracted - time_start)
 
 
     epsilon = get_epsilon(points, k=MIN_POINTS,std_scale=std_scale)
-    time_epsilon = time.time()
+    time_epsilon = time.perf_counter()
     print("cpu_dbscan: Time epsilon obtained = ", time_epsilon - time_points_extracted)
 
     labels,cluster_count = dbscan(points,epsilon,time_epsilon,min_pts=MIN_POINTS)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
 
     
-    time_end = time.time()
+    time_end = time.perf_counter()
     print("cpu_dbscan: Final time = ", time_end - time_start)
 
 
