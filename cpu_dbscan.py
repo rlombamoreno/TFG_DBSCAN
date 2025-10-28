@@ -7,6 +7,8 @@ import netCDF4 as nc
 import time
 import os
 
+MIN_POINTS = 5
+
 def load_data():
     if len(sys.argv) < 2:
         print("cpu_dbscan: Must specify one supported file, either image or netCDF")
@@ -83,7 +85,7 @@ def compute_histogram(image):
 def get_points_in_cluster(image, color_marker):
     y_len, x_len = image.shape
     count = count_cluster_points(image, color_marker, y_len, x_len)
-    points = np.zeros((count, 2), dtype=np.int64)
+    points = np.zeros((count, 2), dtype=np.float32)
     point_index = 0
     for y in range(y_len):
         for x in range(x_len):
@@ -102,76 +104,83 @@ def count_cluster_points(image, color_marker, y_len, x_len):
                 count += 1
     return count
 
-@jit(nopython=True)
-def dbscan_core(points, eps, min_pts, labels):
-    cluster_id = 0
-    for point_index in range(len(points)):
-        if labels[point_index] == -1:
-            neighbors = find_neighbors(point_index, points, eps)
-            if len(neighbors)+1 >= min_pts: # +1 to include the point itself
-                cluster_id += 1
-                labels[point_index] = cluster_id
-                i = 0
-                while i < len(neighbors):
-                    neighbor_index = neighbors[i]
-                    if labels[neighbor_index] == -1:
-                        labels[neighbor_index] = cluster_id
-                        neighbors_aux = find_neighbors(neighbor_index, points, eps)
-                        if len(neighbors_aux)+1 >= min_pts:
-                            neighbors = append_neighbors(neighbors, neighbors_aux)
-                    if labels[neighbor_index] == 0:
-                        labels[neighbor_index] = cluster_id
-                    i += 1
-            else:
-                labels[point_index] = 0
-    return labels, cluster_id
 
-@jit(nopython=True)
-def dbscan(points, eps, min_pts):
-    labels = np.zeros(len(points), dtype=np.int64) - 1
-    labels, cluster_count= dbscan_core(points, eps, min_pts, labels)
+def dbscan(points, eps,timeEpsilon, min_pts):
+    graph = np.zeros((len(points), 2), dtype=np.int32)
+    vector_type, adjacent_list = build_graph(points, eps, graph,min_pts)
+    timeGraph = time.time()
+    print("cpu_dbscan: TimeGraph = ", timeGraph - timeEpsilon)
+    labels = np.zeros(len(points), dtype=np.int32) - 1
+    cluster_count = dbscan_core(points, eps, min_pts, labels, vector_type, adjacent_list, graph)
+    print("cpu_dbscan: TimeDBSCAN = ", time.time() - timeGraph)
     return labels,cluster_count
 
 @jit(nopython=True)
-def find_neighbors(point_index, points, eps):
-    count = 0
-    eps2 = np.float64(eps) * np.float64(eps)
+def build_graph(points, eps, graph,min_pts):
+    vector_type = np.zeros(len(points), dtype=np.int32)-1
+    count_tot = neighbor_count(points, eps, vector_type, graph,min_pts)
+    graph[1:,1] = np.cumsum(graph[:-1,0])
+    adjacent_list = np.zeros(count_tot, dtype=np.int32)
+    index = 0
     for i in range(len(points)):
-        if i != point_index:
-            dx = points[point_index][0] - points[i][0]
-            dy = points[point_index][1] - points[i][1]
-            distance = (dx * dx + dy * dy)
-            if distance <= eps2:
-                count += 1
-    neighbors = np.empty(count, dtype=np.int64)
-    idx = 0
-    for i in range(len(points)):
-        if i != point_index:
-            dx = points[point_index][0] - points[i][0]
-            dy = points[point_index][1] - points[i][1]
-            distance = (dx * dx + dy * dy)
-            if distance <= eps2:
-                neighbors[idx] = i
-                idx += 1
-    return neighbors
+        eps2 = np.float64(eps) * np.float64(eps)
+        for j in range(len(points)):
+            if i != j:
+                dx = points[i][0] - points[j][0]
+                dy = points[i][1] - points[j][1]
+                distance = (dx * dx + dy * dy)
+                if distance <= eps2:
+                    adjacent_list[index] = j
+                    index += 1
+    return vector_type, adjacent_list
 
 @jit(nopython=True)
-def append_neighbors(neighbors, neighbors_aux):
-    temp = np.empty(len(neighbors) + len(neighbors_aux), dtype=np.int64)
-    count = 0
-    for i in range(len(neighbors)):
-        temp[count] = neighbors[i]
-        count += 1
-    for i in range(len(neighbors_aux)):
-        found = False
-        for j in range(len(neighbors)):  
-            if neighbors_aux[i] == neighbors[j]:
-                found = True
-                break
-        if not found:
-            temp[count] = neighbors_aux[i]
-            count += 1
-    return temp[:count]
+def neighbor_count(points, eps, vector_type, graph,min_pts):
+    count_tot = 0
+    for i in range(len(points)):
+        count = 0
+        eps2 = np.float64(eps) * np.float64(eps)
+        for j in range(len(points)):
+            if i != j:
+                dx = points[i][0] - points[j][0]
+                dy = points[i][1] - points[j][1]
+                distance = (dx * dx + dy * dy)
+                if distance <= eps2:
+                    count += 1
+        graph[i][0] = count 
+        if count + 1 >= min_pts :
+            vector_type[i] = 1   
+        count_tot += count
+    return count_tot
+
+@jit(nopython=True)
+def dbscan_core(points, eps, min_pts, labels, vector_type, adjacent_list, graph):
+    cluster_id = 0
+    border_points = np.zeros(len(points), dtype=np.int32)
+    active_flag = 0;
+    for point_index in range(len(points)):
+        if labels[point_index] == -1 and vector_type[point_index] == 1:
+            border_points[point_index] = 1
+            while True:
+                active_flag = 0
+                for i in range(len(points)):
+                    if border_points[i] == 1 and labels[i] == -1:
+                        labels[i] = cluster_id
+                        start = graph[i][1]
+                        degree = graph[i][0]
+                        neighbors_end = start + degree
+                        if vector_type[i] == 1:
+                            neighbors = adjacent_list[start:neighbors_end]
+                            active_flag = 1
+                            for j in range(len(neighbors)):
+                                neighbor_index = neighbors[j]
+                                border_points[neighbor_index] = 1
+                if active_flag == 0:
+                    break
+            border_points[:] = 0
+            cluster_id += 1
+    return cluster_id
+
 
 # Compute k-nearest neighbor distances
 @jit(nopython=True)
@@ -257,17 +266,16 @@ if __name__ == "__main__":
     print("cpu_dbscan: TimePoints = ", timePoints - start)
 
     # Compute epsilon using k-NN distances
-    eps = get_epsilon(points, k=5,std_scale=std_scale)
+    eps = get_epsilon(points, k=MIN_POINTS,std_scale=std_scale)
     timeEpsilon = time.time() # Time after epsilon calculation
     print("cpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
     # Run DBSCAN
-    labels,cluster_count = dbscan(points,5.25, min_pts=5)
+    labels,cluster_count = dbscan(points,eps,timeEpsilon,min_pts=MIN_POINTS)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
 
     # End timing
     end = time.time()
-    print("cpu_dbscan: TimeDBSCAN = ", end - timeEpsilon)
     print("cpu_dbscan: Final time = ", end - start)
 
     # Paint clusters on the image
