@@ -1,49 +1,282 @@
+"""
+gpu_dbscan.py
+-------------
+GPU implementation of the DBSCAN algorithm using CuPy and CUDA kernels.
+
+Author: Rodrigo Lomba Moreno
+Institution: Universidad Politécnica de Madrid  
+Date: November 2025  
+Version: 1.0
+
+Description:
+This script implements the DBSCAN algorithm for image segmentation using
+CuPy for GPU acceleration and CUDA kernels for parallel computation.
+It supports input from common image files (JPEG/PNG) and NetCDF files.
+
+Usage:
+    python3 gpu_dbscan.py <input_filename> [std_scale]
+
+    - <input_filename> : Path to an image (.jpg, .png) or a NetCDF (.nc) file.
+    - [std_scale]      : Optional float in [0, 1] used to scale the std in the
+                         epsilon heuristic. If omitted, std_scale defaults to 1.0.
+    - [min_pts]         : Optional integer for minimum points parameter.
+                          If omitted, calculated as 2*dimension + 1.
+
+Dependencies:
+    - cupy
+    - numpy
+    - pillow
+    - matplotlib
+    - netCDF4
+    - ctypes
+    - time, os, sys
+"""
+
 import sys
 import numpy as np
 import cupy as cp
 import matplotlib.pyplot as plt
+import netCDF4 as nc
 from PIL import Image
 from numba import jit
 import time
 import os
 
 
-MIN_POINTS = 5
+# ---------------------------
+# Global constants
+# ---------------------------
+THREADS_PER_BLOCK = 256
 
-def load_image():
+# ---------------------------
+# Data loading functions
+# ---------------------------
+def load_parameters():
+    """
+    Load optional parameters from command line arguments.
+
+    Returns:
+        tuple: (std_scale: float, min_pts: int)
+    """
+    std_scale = 1.0  # default value
+    min_pts = None   # will be calculated based on dimension
+    
+    # Parse command line arguments
+    if len(sys.argv) >= 3:
+        try:
+            std_scale = float(sys.argv[2])
+            if std_scale < 0 or std_scale > 1:
+                print("gpu_dbscan: std_scale must be between 0 and 1")
+                sys.exit(1)
+            print(f"gpu_dbscan: Using user-provided std_scale: {std_scale}")
+        except ValueError:
+            print("gpu_dbscan: std_scale must be a float between 0 and 1")
+            sys.exit(1)
+    else:
+        print("gpu_dbscan: Using default std_scale: 1.0")
+    
+    if len(sys.argv) >= 4:
+        try:
+            min_pts = int(sys.argv[3])
+            if min_pts < 1:
+                print("gpu_dbscan: min_pts must be a positive integer")
+                sys.exit(1)
+        except ValueError:
+            print("gpu_dbscan: min_pts must be a positive integer")
+            sys.exit(1)
+    
+    return std_scale, min_pts
+
+def calculate_min_pts(user_min_pts=None):
+    """
+    Calculate min_pts parameter. If user provided, use that value.
+    Otherwise, calculate as 2*dimension + 1.
+    For image analysis, dimension is always 2.
+    """
+    if user_min_pts is not None:
+        print(f"gpu_dbscan: Using user-provided min_pts: {user_min_pts}")
+        return user_min_pts
+    
+    # For image analysis, dimension is always 2 (x, y coordinates)
+    dimension = 2
+    calculated_min_pts = 2 * dimension + 1
+    print(f"gpu_dbscan: Calculated min_pts as 2 * dimension + 1 => 2 * {dimension} + 1 = {calculated_min_pts}")
+    return calculated_min_pts
+
+
+
+def load_data():
+    """
+    Load points from an image (.jpg/.png) or NetCDF (.nc) file.
+
+    Returns:
+        tuple: (points: cp.ndarray of shape (N*2,), std_scale: float, min_pts: int)
+    """
     if len(sys.argv) < 2:
-        print("gpu_dbscan: Must specify one image filename")
-        print("example: python3 gpu_dbscan filename.jpg")
+        print("gpu_dbscan: Must specify one supported file, either image or netCDF")
+        print("example: python3 script.py <filename> [std_scale] [min_pts]")
         sys.exit(1)
-    image_filename = sys.argv[1]
+    
+    std_scale, user_min_pts = load_parameters()
+    filename = sys.argv[1]
+    ext = os.path.splitext(filename)[1].lower()
+    
+    if ext == ".jpg" or ext == ".png":
+        points = load_image(filename)
+    elif ext == ".nc":
+        points = load_netcdf(filename)
+    else:
+        print(f"gpu_dbscan: Unsupported file extension: {ext}")
+        sys.exit(1)
+    
+    # Calculate min_pts (always 2D for images)
+    min_pts = calculate_min_pts(user_min_pts)
+    
+    return points, std_scale, min_pts
+
+
+def load_image(image_filename):
+    """
+    Convert a binary image to a list of points corresponding to the cluster color.
+
+    Parameters:
+        image_filename (str): Path to image file
+
+    Returns:
+        cp.ndarray: Flattened array of shape (N*2,) with coordinates of cluster points
+    """
     image_orig = Image.open(image_filename)
     print(f"gpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
-    return cp.array(image_orig.convert('1'), dtype=int)
+    
+    image_bw = cp.array(image_orig.convert('1'), dtype=int)
+    hist = compute_histogram(image_bw)
+    # color_marker indicates the background color;
+    color_marker = 1 if hist[0] < hist[1] else 0
+    
+    points = get_points_in_cluster(image_bw, color_marker)
+    
+    points = points.reshape(-1, 2)
+    points = points[cp.lexsort(cp.stack((points[:,1], points[:,0])))]
+    points = points.ravel()
+    return points
 
-def load_std_scale():
-    if len(sys.argv) != 3:
-        print("gpu_dbscan: Using default std_scale=1")
-        return 1.00
-    std_scale = float(sys.argv[2])
-    if std_scale < 0 or std_scale > 1:
-        print("gpu_dbscan: std_scale must be between 0 and 1")
-        sys.exit(1)
-    return std_scale
+
+def load_netcdf(nc_filename):
+    """
+    Load 2D points from a NetCDF file containing coordinates.
+
+    Parameters:
+        nc_filename (str): Path to NetCDF file
+
+    Returns:
+        cp.ndarray: Flattened array of shape (N*2,) with coordinates
+    """
+    ncdata = nc.Dataset(nc_filename)
+    frame = 1
+    atoms = ncdata.variables['coordinates'][:][frame]
+    ncdata.close()
+    
+    if np.ma.isMaskedArray(atoms):
+        atoms = np.ma.filled(atoms, fill_value=np.nan)
+    
+    r = atoms.transpose()
+    points = points_to_array(r)
+    return points
+
+
+def points_to_array(r):
+    """
+    Convert a 2xN coordinate array to flattened N*2 float32 array.
+
+    Parameters:
+        r (np.ndarray): 2xN array
+
+    Returns:
+        cp.ndarray: Flattened array of shape (N*2,) of points
+    """
+    num_points = r.shape[1]
+    points = cp.zeros(num_points * 2, dtype=cp.float32)
+    r_gpu = cp.array(r[:2, :], dtype=cp.float32,order='C')
+    points[0::2] = r_gpu[0, :]
+    points[1::2] = r_gpu[1, :]
+    return points
+
 
 def save_image(image_colored):
+    """
+    Save the clustered image to disk.
+    
+    Parameters:
+        image_colored (np.ndarray): RGB image with clusters colored
+    """
     image_filename = sys.argv[1]
     name, ext = os.path.splitext(image_filename)
     output_filename = f"{name}_clusters_GPU.png"
     plt.imsave(output_filename, image_colored)
     print(f"gpu_dbscan: Clustered image saved as: {output_filename}")
-    
+
+
+# ---------------------------
+# Image utility functions
+# ---------------------------
 def compute_histogram(image):
+    """
+    Compute histogram of a binary image.
+    """
     y_len, x_len = image.shape
     color_histogram = cp.histogram(image, bins=[0, 1, 2])[0]
     return color_histogram
 
 
+def count_cluster_points(image, color_marker, y_len, x_len):
+    """
+    Count the number of foreground pixels in the image.
+    
+    Parameters:
+        image (cp.ndarray): Binary image
+        color_marker (int): Background color value
+        y_len (int): Image height
+        x_len (int): Image width
+        
+    Returns:
+        int: Number of foreground pixels
+    """
+    count = cp.zeros(1, dtype=cp.int32)
+    
+    blocks_per_grid = (y_len * x_len + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
+    
+    kernel_code =  r'''
+    extern "C" __global__
+    void count_points(const int *image, int *count, const int color_marker, const int y_len, const int x_len) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < y_len * x_len) {
+            int x = idx % x_len;
+            int y = idx / x_len;
+            int linear_idx = y * x_len + x;
+            if (image[linear_idx] != color_marker) {
+                atomicAdd(&count[0], 1);
+            }
+        }
+    }
+    '''
+    module = cp.RawModule(code=kernel_code)
+    count_kernel = module.get_function('count_points')
+    count_kernel((blocks_per_grid,), (THREADS_PER_BLOCK,),(image.ravel().astype(cp.int32), count, color_marker, y_len, x_len))
+    # Transfer the result to host and return as Python int
+    return int(count.get()[0])
+
+
 def get_points_in_cluster(image, color_marker):
+    """
+    Extract coordinates of all foreground pixels using CUDA kernel.
+    
+    Parameters:
+        image (cp.ndarray): Binary image
+        color_marker (int): Background color value
+        
+    Returns:
+        cp.ndarray: Array of foreground point coordinates
+    """
     y_len, x_len = image.shape
     count = count_cluster_points(image, color_marker, y_len, x_len)
 
@@ -55,8 +288,7 @@ def get_points_in_cluster(image, color_marker):
     
     points = cp.zeros(count * 2, dtype=cp.float32)
     
-    threads_per_block = 256
-    blocks_per_grid = (y_len * x_len + (threads_per_block - 1)) // threads_per_block
+    blocks_per_grid = (y_len * x_len + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
     
     kernel_code = r'''
     extern "C" __global__
@@ -76,7 +308,7 @@ def get_points_in_cluster(image, color_marker):
     '''
     module = cp.RawModule(code=kernel_code)
     get_points_kernel = module.get_function('get_points_in_cluster')
-    get_points_kernel((blocks_per_grid,), (threads_per_block,),(image.ravel().astype(cp.int32), points, color_marker, y_len, x_len, points_index))
+    get_points_kernel((blocks_per_grid,), (THREADS_PER_BLOCK,), (image.ravel().astype(cp.int32), points, color_marker, y_len, x_len, points_index))
 
     # Get the actual number of points written by the kernel
     num_points = int(points_index.get()[0])
@@ -86,33 +318,21 @@ def get_points_in_cluster(image, color_marker):
     return points
 
 
-def count_cluster_points(image, color_marker, y_len, x_len):
-    count = cp.zeros(1, dtype=cp.int32)
-    
-    threads_per_block = 256
-    blocks_per_grid = (y_len * x_len + (threads_per_block - 1)) // threads_per_block
-    
-    kernel_code =  r'''
-    extern "C" __global__
-    void count_points(const int *image, int *count, const int color_marker, const int y_len, const int x_len) {
-        int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < y_len * x_len) {
-            int x = idx % x_len;
-            int y = idx / x_len;
-            int linear_idx = y * x_len + x;
-            if (image[linear_idx] != color_marker) {
-                atomicAdd(&count[0], 1);
-            }
-        }
-    }
-    '''
-    module = cp.RawModule(code=kernel_code)
-    count_kernel = module.get_function('count_points')
-    count_kernel((blocks_per_grid,), (threads_per_block,),(image.ravel().astype(cp.int32), count, color_marker, y_len, x_len))
-    # Transfer the result to host and return as Python int
-    return int(count.get()[0])
-
+# ---------------------------
+# Epsilon calculation functions
+# ---------------------------
 def get_epsilon(points, k,std_scale):
+    """
+    Compute the adaptive epsilon using k-distances and standard deviation.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        k (int): Number of neighbors for k-distance
+        std_scale (float): Scaling factor for standard deviation
+
+    Returns:
+        cp.ndarray: Recommended epsilon value
+    """
     kn_distances = compute_kn_distances(points, k) # k-distances
     # Heuristic: epsilon = mean + std_dev * std_scale
     epsilon = cp.zeros(1, dtype=cp.float32)
@@ -121,13 +341,22 @@ def get_epsilon(points, k,std_scale):
     print(f"gpu_dbscan: Recommended epsilon: {epsilon[0]}")
     return epsilon
 
+
 def compute_kn_distances(points, k):
-    
+    """
+    Compute the k-nearest distances for each point using CUDA kernel.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        k (int): Number of neighbors
+
+    Returns:
+        cp.ndarray: Array of k-distances for each point
+    """
     num_points = len(points) // 2
     kn_distances = cp.empty(num_points, dtype=cp.float32)
 
-    threads_per_block = 256
-    blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
+    blocks_per_grid = (num_points + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
     
     MAX_K = k
     kernel_code =  f'''
@@ -171,78 +400,25 @@ def compute_kn_distances(points, k):
     '''
     module = cp.RawModule(code=kernel_code)
     compute_kn_distances_kernel = module.get_function('compute_kn_distances')
-    compute_kn_distances_kernel((blocks_per_grid,), (threads_per_block,), (points, kn_distances, num_points, k))
+    compute_kn_distances_kernel((blocks_per_grid,), (THREADS_PER_BLOCK,), (points, kn_distances, num_points, k))
     return kn_distances
 
-def dbscan(points, eps, min_pts,timeEpsilon):
-    num_points = len(points) // 2
-    vector_degree, vector_type, adjacent_indexes, adjacent_list = build_graph(points, eps,min_pts)
-    timeGraph = time.time() # Time after graph building
-    print("gpu_dbscan: TimeGraph = ", timeGraph - timeEpsilon)
-    labels = cp.full(num_points, -1, dtype=cp.int32) 
-    cluster_count= dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts)
-    print("gpu_dbscan: TimeDBSCAN = ", time.time() - timeGraph)
-    return cp.asnumpy(labels), cluster_count
 
-def dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts):
-    cluster_id = 0
-    num_points = len(points) // 2
-    
-    kernel_func = define_expand_cluster_kernel_gpu()
-
-    threads_per_block = 256
-    blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
-    
-    core_points_cpu = cp.asnumpy(cp.where(vector_type == 1)[0])
-    
-    border_points = cp.zeros(num_points, dtype=cp.int32)
-    active_flag = cp.zeros(1, dtype=cp.int32)
-    
-    for idx in core_points_cpu:
-        if int(labels[idx]) == -1: # Not visited and is core
-            expand_cluster_gpu(points, idx, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,border_points,blocks_per_grid,threads_per_block,active_flag)
-            border_points[:] = 0
-            cluster_id += 1
-    return  cluster_id
-
-def define_expand_cluster_kernel_gpu():
-    kernel_code =  r'''
-    extern "C" __global__
-    void expand_cluster_kernel(const int *vector_degree, const int *adjacent_indexes, const int *adjacent_list, 
-                                int *border_points, const int num_points, const int cluster_id, int *labels, const int min_pts, int *active_flag) {
-        int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_points) {
-            if (border_points[idx] != 0 && labels[idx] == -1) {
-                labels[idx] = cluster_id;           
-                int start_idx = adjacent_indexes[idx];
-                int degree = vector_degree[idx];
-                if(degree + 1 >= min_pts) { // Only expand if core point
-                    *active_flag = 1;
-                    for (int j = start_idx; j < start_idx + degree; j++) {
-                        int neighbor = adjacent_list[j];
-                        border_points[neighbor] = 1;
-                    }
-                }
-            }
-        }
-    }
-    '''
-    module = cp.RawModule(code=kernel_code)
-    expand_cluster_kernel_func = module.get_function('expand_cluster_kernel')
-    return expand_cluster_kernel_func
-
-def expand_cluster_gpu(points, point_index, cluster_id, labels, vector_degree, adjacent_indexes, adjacent_list, min_pts,kernel_func,num_points,border_points,blocks_per_grid,threads_per_block,active_flag):
-    border_points[point_index] = 1
-    
-    while True:
-        active_flag[0] = 0
-        kernel_func((blocks_per_grid,), (threads_per_block,), (vector_degree, adjacent_indexes, adjacent_list, border_points, num_points, cluster_id, labels,min_pts,active_flag))
-        if active_flag[0] == 0:
-            break
-    
-
-
+# ---------------------------
+# Graph construction functions
+# ---------------------------
 def build_graph(points, eps,min_pts):
+    """
+    Build the neighborhood graph for DBSCAN.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        eps (cp.ndarray): Epsilon value
+        min_pts (int): Minimum points for core point
+
+    Returns:
+        tuple: (vector_degree, vector_type, adjacent_indexes, adjacent_list)
+    """
     num_points = len(points) // 2
     
     vector_degree = cp.zeros(num_points, dtype=cp.int32) # Vertices degree
@@ -260,11 +436,24 @@ def build_graph(points, eps,min_pts):
     
     return vector_degree, vector_type, adjacent_indexes, adjacent_list
 
+
 def neigbours_count(points, eps, vector_degree, vector_type, min_pts):
+    """
+    Count neighbors within epsilon for each point and identify core points.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        eps (cp.ndarray): Epsilon value
+        vector_degree (cp.ndarray): Array to store neighbor counts
+        vector_type (cp.ndarray): Array to mark core points
+        min_pts (int): Minimum points for core point
+
+    Returns:
+        tuple: (vector_degree, vector_type)
+    """
     num_points = len(points) // 2
     
-    threads_per_block = 256
-    blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
+    blocks_per_grid = (num_points + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
     
     
     kernel_code =  f'''
@@ -299,10 +488,23 @@ def neigbours_count(points, eps, vector_degree, vector_type, min_pts):
     '''
     module = cp.RawModule(code=kernel_code)
     neigbours_count_kernel = module.get_function('neigbours_count')
-    neigbours_count_kernel((blocks_per_grid,), (threads_per_block,), (points, vector_degree, vector_type, int(num_points), eps, int(min_pts)))
+    neigbours_count_kernel((blocks_per_grid,), (THREADS_PER_BLOCK,), (points, vector_degree, vector_type, int(num_points), eps, int(min_pts)))
     return vector_degree, vector_type
 
+
 def build_adjacency_list_from_indexes(points, eps, vector_degree, adjacent_indexes):
+    """
+    Build the adjacency list from precomputed indexes.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        eps (cp.ndarray): Epsilon value
+        vector_degree (cp.ndarray): Neighbor counts for each point
+        adjacent_indexes (cp.ndarray): Start indexes in adjacency list
+
+    Returns:
+        cp.ndarray: Flattened adjacency list
+    """
     num_points = len(points) // 2
     
     total_neighbors = int(vector_degree.sum())
@@ -311,8 +513,7 @@ def build_adjacency_list_from_indexes(points, eps, vector_degree, adjacent_index
     
     adjacent_list = cp.zeros(total_neighbors, dtype=cp.int32)
     
-    threads_per_block = 256
-    blocks_per_grid = (num_points + (threads_per_block - 1)) // threads_per_block
+    blocks_per_grid = (num_points + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
     
     kernel_code = f'''
     extern "C" __global__
@@ -348,113 +549,133 @@ def build_adjacency_list_from_indexes(points, eps, vector_degree, adjacent_index
     '''
     module = cp.RawModule(code=kernel_code)
     build_adjacency_list_kernel = module.get_function('build_adjacency_list_from_indexes')
-    build_adjacency_list_kernel((blocks_per_grid,), (threads_per_block,), (points, vector_degree, adjacent_indexes, adjacent_list, int(num_points), eps))
+    build_adjacency_list_kernel((blocks_per_grid,), (THREADS_PER_BLOCK,), (points, vector_degree, adjacent_indexes, adjacent_list, int(num_points), eps))
     return adjacent_list
 
 
-# def paint_clusters(image, points, labels, cluster_count, color_marker):
+# ---------------------------
+# DBSCAN core algorithm functions
+# ---------------------------
+def dbscan(points, eps, min_pts,timeEpsilon):
+    """
+    Run the complete DBSCAN algorithm on GPU.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        eps (cp.ndarray): Epsilon value
+        min_pts (int): Minimum points for core point
+        timeEpsilon (float): Timestamp when epsilon was computed
+
+    Returns:
+        tuple: (labels: np.ndarray, cluster_count: int)
+    """
+    num_points = len(points) // 2
+    vector_degree, vector_type, adjacent_indexes, adjacent_list = build_graph(points, eps,min_pts)
+    timeGraph = time.time() # Time after graph building
+    print("gpu_dbscan: TimeGraph = ", timeGraph - timeEpsilon)
+    labels = cp.full(num_points, -1, dtype=cp.int32) 
+    cluster_count= dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts)
+    print("gpu_dbscan: TimeDBSCAN = ", time.time() - timeGraph)
+    return cp.asnumpy(labels), cluster_count
+
+
+def dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts):
+    """
+    Core DBSCAN algorithm using CUDA kernels for cluster expansion.
+
+    Parameters:
+        points (cp.ndarray): Flattened array of points
+        labels (cp.ndarray): Cluster labels (modified in-place)
+        vector_degree (cp.ndarray): Neighbor counts
+        vector_type (cp.ndarray): Core point markers
+        adjacent_indexes (cp.ndarray): Adjacency list indexes
+        adjacent_list (cp.ndarray): Adjacency list
+        min_pts (int): Minimum points for core point
+
+    Returns:
+        int: Number of clusters found
+    """
+    cluster_id = 0
+    num_points = len(points) // 2
     
-#     num_points = len(labels)
-#     if len(points) != num_points * 2:
-#         raise ValueError(f"Length of points ({len(points)}) does not match 2 * length of labels ({2 * num_points})")
+    kernel_func = define_expand_cluster_kernel_gpu()
+
+    blocks_per_grid = (num_points + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
     
-#     points_2d = points.reshape(-1, 2) # Cambia la forma de points a (N, 2)
+    border_points = cp.zeros(num_points, dtype=cp.int32)
+    active_flag = cp.zeros(1, dtype=cp.int32)
+    
+    for idx in range(num_points):
+        if int(labels[idx]) == -1 and int(vector_type[idx]) == 1:
+            border_points[idx] = 1
+            while True:
+                active_flag[0] = 0
+                kernel_func((blocks_per_grid,), (THREADS_PER_BLOCK,), (vector_degree, adjacent_indexes, adjacent_list, border_points, num_points, cluster_id, labels,min_pts,active_flag))
+                if active_flag[0] == 0:
+                    break
+            border_points[:] = 0
+            cluster_id += 1
+    return  cluster_id
 
-#     # Use color_marker to determine background and foreground
-#     # image es un array de CuPy, convertir a numpy para matplotlib
-#     image_np = cp.asnumpy(image)
-#     if color_marker == 1:
-#         base = (1 - image_np) * 255 # white background
-#     else:
-#         base = image_np * 255 # black background
 
-#     # Create an RGB image from the base
-#     image_rgb = np.stack([base, base, base], axis=-1).astype(np.uint8)
+def define_expand_cluster_kernel_gpu():
+    """
+    Define and compile the CUDA kernel for cluster expansion.
 
-#     # If no clusters or no points, return the base image
-#     if cluster_count == 0 or num_points == 0:
-#         return image_rgb
+    Returns:
+        cupy.RawKernel: Compiled kernel function
+    """
+    kernel_code =  r'''
+    extern "C" __global__
+    void expand_cluster_kernel(const int *vector_degree, const int *adjacent_indexes, const int *adjacent_list, 
+                                int *border_points, const int num_points, const int cluster_id, int *labels, const int min_pts, int *active_flag) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < num_points) {
+            if (border_points[idx] != 0 && labels[idx] == -1) {
+                labels[idx] = cluster_id;           
+                int start_idx = adjacent_indexes[idx];
+                int degree = vector_degree[idx];
+                if(degree + 1 >= min_pts) { // Only expand if core point
+                    *active_flag = 1;
+                    for (int j = start_idx; j < start_idx + degree; j++) {
+                        int neighbor = adjacent_list[j];
+                        border_points[neighbor] = 1;
+                    }
+                }
+            }
+        }
+    }
+    '''
+    module = cp.RawModule(code=kernel_code)
+    expand_cluster_kernel_func = module.get_function('expand_cluster_kernel')
+    return expand_cluster_kernel_func    
 
-#     # Separate noise and clusters
-#     noise_mask = labels == -1 # Asumiendo -1 como noise
-#     cluster_mask = labels >= 0 # Asumiendo >= 0 como clusters
 
-#     # Paint noise in black
-#     if np.any(noise_mask):
-#         noise_pts = points_2d[noise_mask] # Usar points_2d
-#         if len(noise_pts) > 0:
-#             y_coords = np.clip(noise_pts[:, 1], 0, image_rgb.shape[0] - 1)
-#             x_coords = np.clip(noise_pts[:, 0], 0, image_rgb.shape[1] - 1)
-#             image_rgb[y_coords, x_coords] = [0, 0, 0]  # noise in black
-
-#     # Paint clusters with colors
-#     if np.any(cluster_mask):
-#         cluster_pts = points_2d[cluster_mask] # Usar points_2d
-#         cluster_labels = labels[cluster_mask]
-#         unique_labels = np.unique(cluster_labels)
-#         n_clusters = len(unique_labels)
-
-#         # Generate distinct colors (excluding black and white)
-#         if n_clusters > 1:
-#             hues = np.linspace(0, 1, n_clusters) # Usar todos los colores disponibles
-#             colors = (plt.cm.hsv(hues)[:, :3] * 255).astype(np.uint8)
-#         else:
-#             colors = np.array([[255, 165, 0]], dtype=np.uint8) # Naranja si solo hay un cluster
-
-#         # Map labels to colors
-#         # Crear un array de colores para cada punto de cluster
-#         cluster_colors = np.zeros((len(cluster_labels), 3), dtype=np.uint8)
-#         for i, label in enumerate(unique_labels):
-#              mask_for_label = cluster_labels == label
-#              color_idx = np.where(unique_labels == label)[0][0]
-#              cluster_colors[mask_for_label] = colors[color_idx]
-
-#         # Assign colors to image
-#         if len(cluster_pts) > 0:
-#             y_coords = np.clip(cluster_pts[:, 1], 0, image_rgb.shape[0] - 1)
-#             x_coords = np.clip(cluster_pts[:, 0], 0, image_rgb.shape[1] - 1)
-#             image_rgb[y_coords, x_coords] = cluster_colors
-
-#     return image_rgb
-
+# ---------------------------
+# Main execution
+# ---------------------------
 if __name__ == "__main__":
     print("gpu_dbscan: Starting GPU DBSCAN clustering")
 
     # Start timing
     start = time.time()
-
-    # Load image and std_scale
-    image_bw = load_image()
-    std_scale=load_std_scale()
-    
-    # Determine color marker based on histogram
-    hist = compute_histogram(image_bw)
-    color_marker = 1 if hist[0] < hist[1] else 0
-    
-    # Extract points from the image
-    points = get_points_in_cluster(image_bw, color_marker)
-    points = points.reshape(-1, 2)
-    points = points[cp.lexsort(cp.stack((points[:,1], points[:,0])))]
-    points = points.ravel()
+    points, std_scale, min_pts = load_data()
 
     points_cpu = cp.asnumpy(points)
     print(f"gpu_dbscan: Number of points to cluster: {len(points_cpu)//2}")
     
     timePoints = time.time() # Time after points extraction
     print("gpu_dbscan: TimePoints = ", timePoints - start)
-    
-    eps = get_epsilon(points, k=MIN_POINTS,std_scale=std_scale)
+
+    eps = get_epsilon(points, min_pts, std_scale=std_scale)
     timeEpsilon = time.time() # Time after epsilon calculation
     print("gpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
-    labels,cluster_count = dbscan(points, eps, min_pts=MIN_POINTS,timeEpsilon=timeEpsilon)
+    labels, cluster_count = dbscan(points, eps, min_pts, timeEpsilon=timeEpsilon)
     print(f"gpu_dbscan: Number of clusters found: {cluster_count}")
     
     # End timing
     end = time.time()
     print("gpu_dbscan: Final time = ", end - start)
 
-    # Paint clusters on the image
-    # image_colored = paint_clusters(image_bw, points_cpu, labels, cluster_count, color_marker)
-    # save_image(image_colored) # Save the colored image
 
