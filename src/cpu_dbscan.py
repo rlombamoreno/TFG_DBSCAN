@@ -15,11 +15,13 @@ It supports input from common image files (JPEG/PNG) and NetCDF files
 (containing coordinate arrays).
 
 Usage:
-    python3 cpu_dbscan.py <input_filename> [std_scale]
+    python3 cpu_dbscan.py <input_filename> [std_scale] [min_pts]
 
     - <input_filename> : Path to an image (.jpg, .png) or a NetCDF (.nc) file.
     - [std_scale]      : Optional float in [0, 1] used to scale the std in the
                          epsilon heuristic. If omitted, std_scale defaults to 1.0.
+    - [min_pts]        : Optional integer for minimum points parameter.
+                         If omitted, calculated as 2*dimension + 1.
 
 Dependencies:
     - numpy
@@ -66,6 +68,58 @@ def load_std_scale():
         sys.exit(1)
     return std_scale
 
+def load_parameters():
+    """
+    Load optional parameters from command line arguments.
+
+    Returns:
+        tuple: (std_scale: float, min_pts: int)
+    """
+    std_scale = 1.0  # default value
+    min_pts = None   # will be calculated based on dimension
+    
+    # Parse command line arguments
+    if len(sys.argv) >= 3:
+        try:
+            std_scale = float(sys.argv[2])
+            if std_scale < 0 or std_scale > 1:
+                print("cpu_dbscan: std_scale must be between 0 and 1")
+                sys.exit(1)
+            print(f"cpu_dbscan: Using user-provided std_scale: {std_scale}")
+        except ValueError:
+            print("cpu_dbscan: std_scale must be a float between 0 and 1")
+            sys.exit(1)
+    else:
+        print("cpu_dbscan: Using default std_scale: 1.0")
+    if len(sys.argv) >= 4:
+        try:
+            min_pts = int(sys.argv[3])
+            if min_pts < 1:
+                print("cpu_dbscan: min_pts must be a positive integer")
+                sys.exit(1)
+        except ValueError:
+            print("cpu_dbscan: min_pts must be a positive integer")
+            sys.exit(1)
+    
+    return std_scale, min_pts
+
+
+def calculate_min_pts(points, user_min_pts=None):
+    """
+    Calculate min_pts parameter. If user provided, use that value.
+    Otherwise, calculate as 2*dimension + 1.
+    For image analysis, dimension is always 2.
+    """
+    if user_min_pts is not None:
+        print(f"cpu_dbscan: Using user-provided min_pts: {user_min_pts}")
+        return user_min_pts
+    
+    # For image analysis, dimension is always 2 (x, y coordinates)
+    dimension = 2
+    calculated_min_pts = 2 * dimension + 1
+    print(f"cpu_dbscan: Calculated min_pts as 2 * dimension + 1 => 2 * {dimension} + 1 = {calculated_min_pts}")
+    return calculated_min_pts
+
 
 def load_data():
     """
@@ -77,18 +131,20 @@ def load_data():
     
     if len(sys.argv) < 2:
         print("cpu_dbscan: Must specify one supported file, either image or netCDF")
-        print("example: python3 script.py <filename> [std_scale]")
+        print("example: python3 script.py <filename> [std_scale] [min_pts]")
         sys.exit(1)
-    std = load_std_scale()
+    std_scale, min_pts = load_parameters()
     filename = sys.argv[1]
     ext = os.path.splitext(filename)[1].lower()
     if ext == ".jpg" or ext == ".png":
-        return load_image(filename), std
+        points = load_image(filename)
     elif ext == ".nc":
-        return load_netcdf(filename), std
+        points = load_netcdf(filename)
     else:
         print(f"cpu_dbscan: Unsupported file extension: {ext}")
         sys.exit(1)
+    min_pts = calculate_min_pts(points, min_pts)
+    return points, std_scale, min_pts
 
 
 def load_image(image_filename):
@@ -463,19 +519,19 @@ def paint_clusters(image, points, labels, cluster_count, color_marker):
 if __name__ == "__main__":
     print("cpu_dbscan: time_starting CPU DBSCAN clustering")
     
-    
     time_start = time.perf_counter()
-    points, std_scale = load_data()
+    
+    points, std_scale, min_pts = load_data()
     print(f"cpu_dbscan: Number of points extracted: {len(points)}")
     time_points_extracted = time.perf_counter()
     print("cpu_dbscan: time points extracted = ", time_points_extracted - time_start)
 
 
-    epsilon = get_epsilon(points, k=MIN_POINTS,std_scale=std_scale)
+    epsilon = get_epsilon(points, min_pts,std_scale=std_scale)
     time_epsilon = time.perf_counter()
     print("cpu_dbscan: Time epsilon obtained = ", time_epsilon - time_points_extracted)
 
-    labels,cluster_count = dbscan(points,epsilon,time_epsilon,min_pts=MIN_POINTS)
+    labels,cluster_count = dbscan(points,epsilon,time_epsilon,min_pts)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
 
     
