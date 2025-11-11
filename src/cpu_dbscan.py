@@ -554,10 +554,10 @@ def save_clustered_image(image, points, labels, cluster_count, color_marker, inp
         color_marker (int): Background color marker
         input_filename (str): Original input filename
     """
-    # Create Results/CPU directory if it doesn't exist
+    # Create results/CPU directory if it doesn't exist
     script_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(script_dir)
-    results_dir = os.path.join(parent_dir, "Results", "CPU")
+    results_dir = os.path.join(parent_dir, "results", "CPU")
     os.makedirs(results_dir, exist_ok=True)
     
     # Generate output filename
@@ -584,10 +584,10 @@ def plot_clusters(points, labels, cluster_count, input_filename):
         cluster_count (int): Number of clusters found
         input_filename (str): Original input filename
     """
-    # Create Results/CPU directory if it doesn't exist
+    # Create results/CPU directory if it doesn't exist
     script_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(script_dir)
-    results_dir = os.path.join(parent_dir, "Results", "CPU")
+    results_dir = os.path.join(parent_dir, "results", "CPU")
     os.makedirs(results_dir, exist_ok=True)
     
     # Generate output filename
