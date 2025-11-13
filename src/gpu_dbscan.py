@@ -704,9 +704,10 @@ def compute_cluster_properties(points, labels, cluster_count):
     module = cp.RawModule(code=kernel_code)
     kernel = module.get_function('organize_cluster_points')
     kernel((blocks_per_grid,), (THREADS_PER_BLOCK,), (labels, cluster_offsets, cluster_pos, cluster_indices, num_points))
-    cluster_centers  = cp.zeros(cluster_count * 2, dtype=cp.double)
-    cluster_radii = cp.zeros(cluster_count, dtype=cp.double)
-    cluster_eigenvalues = cp.zeros(cluster_count * 2, dtype=cp.double)
+    cluster_centers  = cp.zeros(cluster_count * 2, dtype=cp.float32)
+    cluster_radii = cp.zeros(cluster_count, dtype=cp.float32)
+    cluster_eigenvalues = cp.zeros(cluster_count * 2, dtype=cp.float32)
+    cluster_eigenvalues_relation = cp.zeros(cluster_count, dtype=cp.float32)
     
     blocks_per_grid_compute = (cluster_count + (THREADS_PER_BLOCK - 1)) // THREADS_PER_BLOCK
     
@@ -714,7 +715,7 @@ def compute_cluster_properties(points, labels, cluster_count):
     extern "C" __global__
     void compute_cluster_properties(const float *points, const int *cluster_indices,
                                    const int *cluster_offsets, const int *cluster_sizes,
-                                   double *cluster_centers, double *cluster_radii, double *cluster_eigenvalues, int cluster_count) {
+                                   float *cluster_centers, float *cluster_radii, float *cluster_eigenvalues,float *cluster_eigenvalues_relation, int cluster_count) {
         int cluster_id = blockIdx.x * blockDim.x + threadIdx.x;
         
         if (cluster_id < cluster_count) {
@@ -731,8 +732,8 @@ def compute_cluster_properties(points, labels, cluster_count):
                 sum_y += (double)points[point_idx * 2 + 1];
             }
             
-            double center_x = sum_x / cluster_size;
-            double center_y = sum_y / cluster_size;
+            float center_x = (float)(sum_x / cluster_size);
+            float center_y = (float)(sum_y / cluster_size);
             
             cluster_centers[cluster_id * 2] = center_x;
             cluster_centers[cluster_id * 2 + 1] = center_y;
@@ -759,10 +760,17 @@ def compute_cluster_properties(points, labels, cluster_count):
             
             double trace = Ixx + Iyy;
             double discriminant = sqrt((Ixx - Iyy) * (Ixx - Iyy) + 4.0 * Ixy * Ixy);
+            
             double lambda1 = (trace + discriminant) / 2.0;
             double lambda2 = (trace - discriminant) / 2.0;
-            cluster_eigenvalues[cluster_id * 2] = lambda1;
-            cluster_eigenvalues[cluster_id * 2 + 1] = lambda2;
+            
+            cluster_eigenvalues[cluster_id * 2] = (float)lambda1;
+            cluster_eigenvalues[cluster_id * 2 + 1] = (float)lambda2;
+            
+            double lambda_max = lambda1 > lambda2 ? lambda1 : lambda2;
+            double lambda_min = lambda1 <= lambda2 ? lambda1 : lambda2;
+            
+            cluster_eigenvalues_relation[cluster_id] = (float)(lambda_max / lambda_min);
         }
     }
     '''
@@ -770,14 +778,14 @@ def compute_cluster_properties(points, labels, cluster_count):
     kernel_compute = module_compute.get_function('compute_cluster_properties')
     kernel_compute((blocks_per_grid_compute,), (THREADS_PER_BLOCK,),
                   (points, cluster_indices, cluster_offsets, cluster_sizes,
-                   cluster_centers, cluster_radii, cluster_eigenvalues, cluster_count))
-    return cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes
+                   cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_count))
+    return cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation
 
 
 #---------------------------
 #Save cluster properties
 #---------------------------
-def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, 
+def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, 
                            input_filename=None, std_scale=None, min_pts=None):
     """
     Save cluster properties to a file in results/GPU folder with descriptive name.
@@ -815,7 +823,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
             f.write(f"# std_scale: {std_scale}\n")
         if min_pts is not None:
             f.write(f"# min_pts: {min_pts}\n")
-        f.write("# cluster_id num_particles center_x center_y gyration_radius lambda1 lambda2\n")
+        f.write("# cluster_id num_points center_x center_y gyration_radius lambda1 lambda2 relation_between_lambdas\n")
         
         for i in range(cluster_count):
             if cluster_sizes[i] > 0:
@@ -825,8 +833,9 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
                 lambda1 = cluster_eigenvalues[i * 2]
                 lambda2 = cluster_eigenvalues[i * 2 + 1]
                 size = cluster_sizes[i]
+                relation = cluster_eigenvalues_relation[i]
                 
-                f.write(f"{i} {size} {center_x:.6f} {center_y:.6f} {radius:.6f} {lambda1:.6f} {lambda2:.6f}\n")
+                f.write(f"{i} {size} {center_x:.6f} {center_y:.6f} {radius:.6f} {lambda1:.6f} {lambda2:.6f} {relation:.6f}\n")
     
     print(f"gpu_dbscan: Cluster properties saved to {filename}")
 
@@ -855,16 +864,16 @@ if __name__ == "__main__":
     timeDBSCAN = time.time()
     print("gpu_dbscan: Time DBSCAN and graph construction = ", timeDBSCAN - timeEpsilon)
     
-    cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes = compute_cluster_properties(points, labels, cluster_count)
+    cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation = compute_cluster_properties(points, labels, cluster_count)
     timeProperties = time.time()
     print("gpu_dbscan: Time Properties = ", timeProperties - timeDBSCAN)
     cluster_centers_cpu = cp.asnumpy(cluster_centers)
     cluster_radii_cpu = cp.asnumpy(cluster_radii)
     cluster_eigenvalues_cpu = cp.asnumpy(cluster_eigenvalues)
     cluster_sizes_cpu = cp.asnumpy(cluster_sizes)
-    
+    cluster_eigenvalues_relation_cpu = cp.asnumpy(cluster_eigenvalues_relation)
     input_filename = sys.argv[1]  # Get the input filename from command line
-    save_cluster_properties(cluster_centers_cpu, cluster_radii_cpu, cluster_eigenvalues_cpu, cluster_sizes_cpu, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
+    save_cluster_properties(cluster_centers_cpu, cluster_radii_cpu, cluster_eigenvalues_cpu, cluster_eigenvalues_relation_cpu, cluster_sizes_cpu, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
     
     # End timing
     end = time.time()

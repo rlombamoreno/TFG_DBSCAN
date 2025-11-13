@@ -59,7 +59,7 @@ def load_cuda_library():
     Returns:
         ctypes.CDLL: Loaded library object
     """
-    lib = ctypes.CDLL('./libdbscan.so')
+    lib = ctypes.CDLL('./src/libdbscan.so')
 
     # Define function signatures
     lib.dbscan_core_cuda.argtypes = [
