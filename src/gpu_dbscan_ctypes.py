@@ -844,6 +844,134 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     
 
 # ---------------------------
+# Histogram functions
+# ---------------------------
+def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_relation, 
+                             input_filename=None, std_scale=None, min_pts=None):
+    """
+    Create three histograms: cluster sizes, gyration radii, and eigenvalue relations.
+    
+    Parameters:
+        cluster_sizes (np.ndarray): Array of cluster sizes
+        cluster_radii (np.ndarray): Array of gyration radii
+        cluster_eigenvalues_relation (np.ndarray): Array of eigenvalue relations (lambda_max/lambda_min)
+        input_filename (str): Original input filename for naming
+        std_scale (float): std_scale parameter for filename
+        min_pts (int): min_pts parameter for filename
+    """
+    # Filter out zero-sized clusters
+    valid_mask = cluster_sizes > 0
+    sizes = cluster_sizes[valid_mask]
+    radii = cluster_radii[valid_mask]
+    relations = cluster_eigenvalues_relation[valid_mask]
+    
+    if len(sizes) == 0:
+        print("gpu_dbscan: No valid clusters for histogram creation.")
+        return
+    
+    # Create results/GPU directory if it doesn't exist
+    output_dir = "results/GPU"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate base filename
+    base_name = os.path.splitext(os.path.basename(input_filename))[0] if input_filename else "clusters"
+    param_str = ""
+    if std_scale is not None and min_pts is not None:
+        param_str = f"_s{std_scale}_m{min_pts}"
+    elif std_scale is not None:
+        param_str = f"_s{std_scale}"
+    elif min_pts is not None:
+        param_str = f"_m{min_pts}"
+    
+    # Create figure with 3 subplots
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # Histogram 1: Cluster sizes
+    axes[0].hist(sizes, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+    axes[0].set_xlabel('Tamaño del Cluster (número de puntos)')
+    axes[0].set_ylabel('Frecuencia')
+    axes[0].set_title('Distribución de Tamaños de Clusters')
+    axes[0].grid(True, alpha=0.3)
+    # Add statistics
+    axes[0].axvline(np.mean(sizes), color='red', linestyle='--', label=f'Media: {np.mean(sizes):.1f}')
+    axes[0].axvline(np.median(sizes), color='green', linestyle='--', label=f'Mediana: {np.median(sizes):.1f}')
+    axes[0].legend()
+    
+    # Histogram 2: Gyration radii
+    axes[1].hist(radii, bins=20, alpha=0.7, color='lightgreen', edgecolor='black')
+    axes[1].set_xlabel('Radio de Giro')
+    axes[1].set_ylabel('Frecuencia')
+    axes[1].set_title('Distribución de Radios de Giro')
+    axes[1].grid(True, alpha=0.3)
+    # Add statistics
+    axes[1].axvline(np.mean(radii), color='red', linestyle='--', label=f'Media: {np.mean(radii):.2f}')
+    axes[1].axvline(np.median(radii), color='green', linestyle='--', label=f'Mediana: {np.median(radii):.2f}')
+    axes[1].legend()
+    
+    # Histogram 3: Eigenvalue relations (shape anisotropy)
+    # Filter out infinite values and very large values
+    valid_relations = relations[np.isfinite(relations)]
+    valid_relations = valid_relations[valid_relations < np.percentile(valid_relations, 95)]  # Remove outliers
+    
+    axes[2].hist(valid_relations, bins=20, alpha=0.7, color='salmon', edgecolor='black')
+    axes[2].set_xlabel(r'Relación $\lambda_{\max} / \lambda_{\min}$')
+    axes[2].set_ylabel('Frecuencia')
+    axes[2].set_title('Distribución Relacion de Autovalores del Tensor de Inercia')
+    axes[2].grid(True, alpha=0.3)
+    # Add statistics and interpretation
+    mean_rel = np.mean(valid_relations)
+    axes[2].axvline(mean_rel, color='red', linestyle='--', label=f'Media: {mean_rel:.2f}')
+    axes[2].axvline(1.0, color='blue', linestyle='-', alpha=0.5, label='Perfectamente circular')
+    
+    # Add shape interpretation
+    if mean_rel < 1.5:
+        shape_text = "Formas mayormente circulares"
+    elif mean_rel < 3.0:
+        shape_text = "Mezcla de formas"
+    else:
+        shape_text = "Formas mayormente alargadas"
+    
+    axes[2].text(0.05, 0.95, shape_text, transform=axes[2].transAxes, 
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
+                verticalalignment='top')
+    axes[2].legend()
+    
+    # Adjust layout and save
+    plt.tight_layout()
+    histogram_filename = os.path.join(output_dir, f"histograms_{base_name}{param_str}.png")
+    plt.savefig(histogram_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"gpu_dbscan: Histograms saved to {histogram_filename}")
+    
+    # Also save histogram data as text file
+    data_filename = os.path.join(output_dir, f"histogram_data_{base_name}{param_str}.txt")
+    with open(data_filename, 'w') as f:
+        f.write("# Cluster Size Statistics\n")
+        f.write(f"# Total clusters: {len(sizes)}\n")
+        f.write(f"# Mean size: {np.mean(sizes):.2f}\n")
+        f.write(f"# Median size: {np.median(sizes):.2f}\n")
+        f.write(f"# Std size: {np.std(sizes):.2f}\n")
+        f.write(f"# Min size: {np.min(sizes)}\n")
+        f.write(f"# Max size: {np.max(sizes)}\n\n")
+        
+        f.write("# Gyration Radius Statistics\n")
+        f.write(f"# Mean radius: {np.mean(radii):.4f}\n")
+        f.write(f"# Median radius: {np.median(radii):.4f}\n")
+        f.write(f"# Std radius: {np.std(radii):.4f}\n")
+        f.write(f"# Min radius: {np.min(radii):.4f}\n")
+        f.write(f"# Max radius: {np.max(radii):.4f}\n\n")
+        
+        f.write("# Shape Anisotropy Statistics\n")
+        f.write(f"# Mean relation: {np.mean(valid_relations):.4f}\n")
+        f.write(f"# Median relation: {np.median(valid_relations):.4f}\n")
+        f.write(f"# Std relation: {np.std(valid_relations):.4f}\n")
+        f.write(f"# Interpretation: {shape_text}\n")
+    
+    print(f"gpu_dbscan: Histogram data saved to {data_filename}")
+    
+    
+# ---------------------------
 # Main execution
 # ---------------------------
 if __name__ == "__main__":
@@ -878,7 +1006,7 @@ if __name__ == "__main__":
     cluster_eigenvalues_relation_cpu = cp.asnumpy(cluster_eigenvalues_relation)
     input_filename = sys.argv[1]  # Get the input filename from command line
     save_cluster_properties(cluster_centers_cpu, cluster_radii_cpu, cluster_eigenvalues_cpu, cluster_eigenvalues_relation_cpu, cluster_sizes_cpu, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
-    
+    create_cluster_histograms(cluster_sizes_cpu, cluster_radii_cpu, cluster_eigenvalues_relation_cpu, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
     # End timing
     end = time.time()
     print("gpu_dbscan: Total Time = ", end - start)
