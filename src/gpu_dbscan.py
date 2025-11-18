@@ -798,23 +798,19 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     output_dir = "results/GPU"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Generate output filename
-    if input_filename is None:
-        filename = os.path.join(output_dir, "cluster_properties.txt")
-    else:
-        base_name = os.path.splitext(os.path.basename(input_filename))[0]
-        
-        # Include parameters in filename
-        param_str = ""
-        if std_scale is not None and min_pts is not None:
-            param_str = f"_s{std_scale}_m{min_pts}"
-        elif std_scale is not None:
-            param_str = f"_s{std_scale}"
-        elif min_pts is not None:
-            param_str = f"_m{min_pts}"
-            
-        filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
+    base_name = os.path.splitext(os.path.basename(input_filename))[0]
     
+    # Include parameters in filename
+    param_str = ""
+    if std_scale is not None and min_pts is not None:
+        param_str = f"_s{std_scale}_m{min_pts}"
+    elif std_scale is not None:
+        param_str = f"_s{std_scale}"
+    elif min_pts is not None:
+        param_str = f"_m{min_pts}"
+        
+    filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
+
     with open(filename, 'w') as f:
         # Write header with parameters
         if input_filename:

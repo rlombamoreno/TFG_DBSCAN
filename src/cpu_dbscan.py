@@ -477,6 +477,195 @@ def dbscan(points, epsilon,time_epsilon, min_pts):
 
 
 # ---------------------------
+# Cluster properties computation
+# ---------------------------
+def compute_cluster_properties(points, labels, cluster_count):
+    """
+    Compute cluster properties: mass center and gyration radius.
+    
+    Parameters:
+        points (np.ndarray): Array of points (N, 2) or flattened array
+        labels (np.ndarray): Cluster labels for each point
+        cluster_count (int): Number of clusters found
+        
+    Returns:
+        tuple: (cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation)
+    """
+      # Ensure points is in (N, 2) shape
+    if points.ndim == 1:
+        num_points = len(points) // 2
+        points_2d = points.reshape(-1, 2)
+    else:
+        num_points = len(points)
+        points_2d = points
+    
+    # Filter out noise points (label = -1)
+    valid_mask = labels != -1
+    valid_labels = labels[valid_mask]
+    
+    if len(valid_labels) == 0:
+        print("cpu_dbscan: No clusters found for property computation.")
+        return (np.empty(0, dtype=np.float32), np.empty(0, dtype=np.float32), 
+                np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int32),
+                np.empty(0, dtype=np.float32))
+
+    # Calculate cluster sizes using the same method as CPU
+    cluster_sizes = np.zeros(cluster_count, dtype=np.int32)
+    for i in range(cluster_count):
+        cluster_sizes[i] = np.sum(valid_labels == i)
+    
+    # Organize cluster indices using the same graph structure as CPU DBSCAN
+    cluster_indices = []
+    cluster_offsets = np.zeros(cluster_count, dtype=np.int32)
+    
+    # Build cluster offsets (similar to GPU version but in series)
+    if cluster_count > 0:
+        cluster_offsets[0] = 0
+        for i in range(1, cluster_count):
+            cluster_offsets[i] = cluster_offsets[i-1] + cluster_sizes[i-1]
+    
+    # Initialize cluster indices array
+    total_cluster_points = np.sum(cluster_sizes)
+    cluster_indices_arr = np.zeros(total_cluster_points, dtype=np.int32)
+    cluster_pos = np.zeros(cluster_count, dtype=np.int32)
+    
+    # Organize points by cluster using the valid points only
+    for point_idx in range(num_points):
+        cluster_id = labels[point_idx]
+        if cluster_id >= 0:  # Skip noise points
+            pos = cluster_pos[cluster_id]
+            cluster_indices_arr[cluster_offsets[cluster_id] + pos] = point_idx
+            cluster_pos[cluster_id] += 1
+    
+    # Initialize output arrays
+    cluster_centers = np.zeros(cluster_count * 2, dtype=np.float32)
+    cluster_radii = np.zeros(cluster_count, dtype=np.float32)
+    cluster_eigenvalues = np.zeros(cluster_count * 2, dtype=np.float32)
+    cluster_eigenvalues_relation = np.zeros(cluster_count, dtype=np.float32)
+    
+    # Compute properties for each cluster using the graph structure
+    for cluster_id in range(cluster_count):
+        cluster_size = cluster_sizes[cluster_id]
+        
+        if cluster_size == 0:
+            continue
+            
+        start_idx = cluster_offsets[cluster_id]
+        
+        # Compute center of mass
+        sum_x = 0.0
+        sum_y = 0.0
+        
+        for i in range(cluster_size):
+            point_idx = cluster_indices_arr[start_idx + i]
+            sum_x += points_2d[point_idx, 0]
+            sum_y += points_2d[point_idx, 1]
+        
+        center_x = sum_x / cluster_size
+        center_y = sum_y / cluster_size
+        
+        cluster_centers[cluster_id * 2] = center_x
+        cluster_centers[cluster_id * 2 + 1] = center_y
+        
+        # Compute gyration radius and inertia tensor
+        sum_r2 = 0.0
+        Ixx = 0.0
+        Iyy = 0.0
+        Ixy = 0.0
+        
+        for i in range(cluster_size):
+            point_idx = cluster_indices_arr[start_idx + i]
+            dx = points_2d[point_idx, 0] - center_x
+            dy = points_2d[point_idx, 1] - center_y
+            
+            sum_r2 += dx * dx + dy * dy
+            
+            # Inertia tensor components
+            Ixx += dy * dy  # Ixx = Σ y²
+            Iyy += dx * dx  # Iyy = Σ x²
+            Ixy += dx * dy  # Ixy = -Σ xy
+        
+        cluster_radii[cluster_id] = np.sqrt(sum_r2 / cluster_size)
+        
+        # Adjust Ixy sign for proper inertia tensor
+        Ixy = -Ixy
+        
+        # Compute eigenvalues of inertia tensor
+        trace = Ixx + Iyy
+        discriminant = np.sqrt((Ixx - Iyy) * (Ixx - Iyy) + 4.0 * Ixy * Ixy)
+        
+        lambda1 = (trace + discriminant) / 2.0
+        lambda2 = (trace - discriminant) / 2.0
+        
+        cluster_eigenvalues[cluster_id * 2] = lambda1
+        cluster_eigenvalues[cluster_id * 2 + 1] = lambda2
+        
+        # Compute relation between eigenvalues
+        lambda_max = max(lambda1, lambda2)
+        lambda_min = min(lambda1, lambda2)
+        
+        if lambda_min > 1e-10:  # Avoid division by zero
+            cluster_eigenvalues_relation[cluster_id] = lambda_max / lambda_min
+        else:
+            cluster_eigenvalues_relation[cluster_id] = 0.0
+    
+    return cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation
+
+#---------------------------
+# Save cluster properties
+#---------------------------
+def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, 
+                           input_filename=None, std_scale=None, min_pts=None):
+    """
+    Save cluster properties to a file in results/CPU folder with descriptive name.
+    """
+    cluster_count = len(cluster_sizes)
+    
+    import os
+    
+    # Create results/CPU directory if it doesn't exist
+    output_dir = "results/CPU"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    base_name = os.path.splitext(os.path.basename(input_filename))[0]
+    
+    # Include parameters in filename
+    param_str = ""
+    if std_scale is not None and min_pts is not None:
+        param_str = f"_s{std_scale}_m{min_pts}"
+    elif std_scale is not None:
+        param_str = f"_s{std_scale}"
+    elif min_pts is not None:
+        param_str = f"_m{min_pts}"
+        
+    filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
+
+    with open(filename, 'w') as f:
+        # Write header with parameters
+        if input_filename:
+            f.write(f"# Input file: {input_filename}\n")
+        if std_scale is not None:
+            f.write(f"# std_scale: {std_scale}\n")
+        if min_pts is not None:
+            f.write(f"# min_pts: {min_pts}\n")
+        f.write("# cluster_id num_points center_x center_y gyration_radius lambda1 lambda2 relation_between_lambdas\n")
+        
+        for i in range(cluster_count):
+            if cluster_sizes[i] > 0:
+                center_x = cluster_centers[i * 2]
+                center_y = cluster_centers[i * 2 + 1]
+                radius = cluster_radii[i]
+                lambda1 = cluster_eigenvalues[i * 2]
+                lambda2 = cluster_eigenvalues[i * 2 + 1]
+                size = cluster_sizes[i]
+                relation = cluster_eigenvalues_relation[i]
+                
+                f.write(f"{i} {size} {center_x:.6f} {center_y:.6f} {radius:.6f} {lambda1:.6f} {lambda2:.6f} {relation:.6f}\n")
+    
+    print(f"gpu_dbscan: Cluster properties saved to {filename}")
+
+
+# ---------------------------
 # Visualization functions
 # ---------------------------
 def paint_clusters(image, points, labels, cluster_count, color_marker):
@@ -637,7 +826,7 @@ def plot_clusters(points, labels, cluster_count, input_filename):
 
 
 # ---------------------------
-# 6. Main script
+# Main script
 # ---------------------------
 if __name__ == "__main__":
     print("cpu_dbscan: time_starting CPU DBSCAN clustering")
@@ -656,10 +845,19 @@ if __name__ == "__main__":
 
     labels,cluster_count = dbscan(points,epsilon,time_epsilon,min_pts)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
-
+    timeDBSCAN = time.perf_counter()
+    print("cpu_dbscan: Time DBSCAN and graph construction = ", timeDBSCAN - time_epsilon)
+    
+    cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation = compute_cluster_properties(points, labels, cluster_count)
+    timeProperties = time.perf_counter()
+    print("cpu_dbscan: Time Properties = ", timeProperties - timeDBSCAN)
+    
+    input_filename = sys.argv[1]  # Get the input filename from command line
+    save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
+    
     
     time_end = time.perf_counter()
-    print("cpu_dbscan: Final time = ", time_end - time_start)
+    print("cpu_dbscan: Total time = ", time_end - time_start)
     
     
     # Visualize and save results
