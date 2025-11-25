@@ -39,7 +39,6 @@ import ctypes
 import matplotlib.pyplot as plt
 import netCDF4 as nc
 from PIL import Image
-from numba import jit
 import time
 import os
 
@@ -50,7 +49,7 @@ import os
 THREADS_PER_BLOCK = 256
 
 #---------------------------
-#Library loading
+# Library loading
 #---------------------------
 def load_cuda_library():
     """
@@ -179,7 +178,7 @@ def load_image(image_filename):
         image_filename (str): Path to image file
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2,) with coordinates of cluster points
+        cp.ndarray: Flattened array of shape (N*2) with coordinates of cluster points
     """
     image_orig = Image.open(image_filename)
     print(f"gpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
@@ -201,7 +200,7 @@ def load_netcdf(nc_filename):
         nc_filename (str): Path to NetCDF file
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2,) with coordinates
+        cp.ndarray: Flattened array of shape (N*2) with coordinates
     """
     ncdata = nc.Dataset(nc_filename)
     frame = 1
@@ -223,7 +222,7 @@ def points_to_array(r):
         r (np.ndarray): 2xN array
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2,) of points
+        cp.ndarray: Flattened array of shape (N*2) of points
     """
     num_points = r.shape[1]
     points = cp.zeros(num_points * 2, dtype=cp.float32)
@@ -596,7 +595,7 @@ def dbscan(points, eps, min_pts,timeEpsilon):
         timeEpsilon (float): Timestamp when epsilon was computed
 
     Returns:
-        tuple: (labels: np.ndarray, cluster_count: int)
+        tuple: (labels: cp.ndarray, cluster_count: int)
     """
     num_points = len(points) // 2
     vector_degree, vector_type, adjacent_indexes, adjacent_list = build_graph(points, eps,min_pts)
@@ -794,8 +793,6 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     Save cluster properties to a file in results/GPU folder with descriptive name.
     """
     cluster_count = len(cluster_sizes)
-    
-    import os
     
     # Create results/GPU directory if it doesn't exist
     output_dir = "results/GPU"

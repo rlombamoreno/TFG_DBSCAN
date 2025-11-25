@@ -28,7 +28,6 @@ Dependencies:
     - pillow
     - matplotlib
     - netCDF4
-    - ctypes
     - time, os, sys
 """
 
@@ -90,7 +89,7 @@ def load_parameters():
 def calculate_min_pts(user_min_pts=None):
     """
     Calculate min_pts parameter. If user provided, use that value.
-    Otherwise, calculate as 2*dimension + 1.
+    Otherwise, calculate as 2 * dimension + 1.
     For image analysis, dimension is always 2.
     """
     if user_min_pts is not None:
@@ -110,7 +109,7 @@ def load_data():
     Load points from an image (.jpg/.png) or NetCDF (.nc) file.
 
     Returns:
-        tuple: (points: cp.ndarray of shape (N*2,), std_scale: float, min_pts: int)
+        tuple: (points: cp.ndarray of shape (N*2), std_scale: float, min_pts: int)
     """
     if len(sys.argv) < 2:
         print("gpu_dbscan: Must specify one supported file, either image or netCDF")
@@ -169,7 +168,7 @@ def load_netcdf(nc_filename):
         nc_filename (str): Path to NetCDF file
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2,) with coordinates
+        cp.ndarray: Flattened array of shape (N*2) with coordinates
     """
     ncdata = nc.Dataset(nc_filename)
     frame = 1
@@ -567,7 +566,7 @@ def dbscan(points, eps, min_pts,timeEpsilon):
         timeEpsilon (float): Timestamp when epsilon was computed
 
     Returns:
-        tuple: (labels: np.ndarray, cluster_count: int)
+        tuple: (labels: cp.ndarray, cluster_count: int)
     """
     num_points = len(points) // 2
     vector_degree, vector_type, adjacent_indexes, adjacent_list = build_graph(points, eps,min_pts)
@@ -791,8 +790,6 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     Save cluster properties to a file in results/GPU folder with descriptive name.
     """
     cluster_count = len(cluster_sizes)
-    
-    import os
     
     # Create results/GPU directory if it doesn't exist
     output_dir = "results/GPU"
