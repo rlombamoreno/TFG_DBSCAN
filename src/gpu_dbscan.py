@@ -37,7 +37,6 @@ import cupy as cp
 import matplotlib.pyplot as plt
 import netCDF4 as nc
 from PIL import Image
-from numba import jit
 import time
 import os
 
