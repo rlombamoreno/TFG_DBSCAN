@@ -49,7 +49,7 @@ import os
 THREADS_PER_BLOCK = 256
 
 #---------------------------
-# Library loading
+#Library loading
 #---------------------------
 def load_cuda_library():
     """
@@ -152,9 +152,13 @@ def load_data():
     std_scale, user_min_pts = load_parameters()
     filename = sys.argv[1]
     ext = os.path.splitext(filename)[1].lower()
+    is_image = False
+    image_data = None
     
     if ext == ".jpg" or ext == ".png":
-        points = load_image(filename)
+        points,image_bw, color_marker = load_image(filename)
+        is_image = True
+        image_data = (image_bw, color_marker)
     elif ext == ".nc":
         points = load_netcdf(filename)
     else:
@@ -164,7 +168,7 @@ def load_data():
     # Calculate min_pts (always 2D for images)
     min_pts = calculate_min_pts(user_min_pts)
     
-    return points, std_scale, min_pts
+    return points, std_scale, min_pts, is_image, image_data
 
 
 # ---------------------------
@@ -178,7 +182,7 @@ def load_image(image_filename):
         image_filename (str): Path to image file
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2) with coordinates of cluster points
+        cp.ndarray: Flattened array of shape (N*2,) with coordinates of cluster points
     """
     image_orig = Image.open(image_filename)
     print(f"gpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
@@ -189,7 +193,8 @@ def load_image(image_filename):
     color_marker = 1 if hist[0] < hist[1] else 0
     
     points = get_points_in_cluster(image_bw, color_marker)
-    return points
+    image_bw = np.array(image_bw.get(), dtype=int) 
+    return points, image_bw, color_marker
 
 
 def load_netcdf(nc_filename):
@@ -200,7 +205,7 @@ def load_netcdf(nc_filename):
         nc_filename (str): Path to NetCDF file
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2) with coordinates
+        cp.ndarray: Flattened array of shape (N*2,) with coordinates
     """
     ncdata = nc.Dataset(nc_filename)
     frame = 1
@@ -222,7 +227,7 @@ def points_to_array(r):
         r (np.ndarray): 2xN array
 
     Returns:
-        cp.ndarray: Flattened array of shape (N*2) of points
+        cp.ndarray: Flattened array of shape (N*2,) of points
     """
     num_points = r.shape[1]
     points = cp.zeros(num_points * 2, dtype=cp.float32)
@@ -595,15 +600,15 @@ def dbscan(points, eps, min_pts,timeEpsilon):
         timeEpsilon (float): Timestamp when epsilon was computed
 
     Returns:
-        tuple: (labels: cp.ndarray, cluster_count: int)
+        tuple: (labels: np.ndarray, cluster_count: int)
     """
     num_points = len(points) // 2
     vector_degree, vector_type, adjacent_indexes, adjacent_list = build_graph(points, eps,min_pts)
-    timeGraph = time.time() # Time after graph building
+    timeGraph = time.perf_counter() # Time after graph building
     print("gpu_dbscan: TimeGraph = ", timeGraph - timeEpsilon)
     labels = cp.full(num_points, -1, dtype=cp.int32) 
     cluster_count= dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts)
-    print("gpu_dbscan: TimeDBSCAN = ", time.time() - timeGraph)
+    print("gpu_dbscan: TimeDBSCAN = ", time.perf_counter() - timeGraph)
     return labels, cluster_count
 
 def dbscan_core(points, labels, vector_degree, vector_type, adjacent_indexes, adjacent_list, min_pts):
@@ -794,6 +799,8 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     """
     cluster_count = len(cluster_sizes)
     
+    import os
+    
     # Create results/GPU directory if it doesn't exist
     output_dir = "results/GPU"
     os.makedirs(output_dir, exist_ok=True)
@@ -969,43 +976,233 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     
     
 # ---------------------------
+# Visualization functions
+# ---------------------------
+def paint_clusters(image, points, labels, cluster_count, color_marker):
+    """
+    Paint clusters on the original image with different colors.
+    
+    Parameters:
+        image (np.ndarray): Original binary image
+        points (np.ndarray): Array of points used for clustering
+        labels (np.ndarray): Cluster labels (-1 = noise, >=0 = cluster ID)
+        cluster_count (int): Number of clusters found
+        color_marker (int): Background color marker
+        
+    Returns:
+        np.ndarray: Colored RGB image with clusters
+    """
+    # Use color_marker to determine background and foreground
+    if color_marker == 1:
+        base = (1 - image) * 255  # white background
+    else:
+        base = image * 255  # black background
+
+    # Create an RGB image from the base
+    image_rgb = np.stack([base, base, base], axis=-1).astype(np.uint8)
+
+    # If no clusters or no points, return the base image
+    if cluster_count == 0 or len(points) == 0:
+        return image_rgb
+
+    # Separate noise and clusters
+    noise_mask = labels == -1
+    cluster_mask = labels >= 0
+
+    # Paint noise in red
+    if np.any(noise_mask):
+        noise_pts = points[noise_mask]
+        if len(noise_pts) > 0:
+            y_coords = np.clip(noise_pts[:, 1].astype(int), 0, image_rgb.shape[0] - 1)
+            x_coords = np.clip(noise_pts[:, 0].astype(int), 0, image_rgb.shape[1] - 1)
+            image_rgb[y_coords, x_coords] = [255, 0, 0]  # noise in red
+
+    # Paint clusters with colors
+    if np.any(cluster_mask):
+        cluster_pts = points[cluster_mask]
+        cluster_labels = labels[cluster_mask]
+        unique_labels = np.unique(cluster_labels)
+        n_clusters = len(unique_labels)
+
+        # Generate distinct colors (excluding black, white, and red)
+        if n_clusters > 0:
+            hues = np.linspace(0, 1, n_clusters + 1)[:-1]  # avoid repetition
+            colors = (plt.cm.hsv(hues)[:, :3] * 255).astype(np.uint8)
+
+            # Map labels to colors
+            for i, label in enumerate(unique_labels):
+                mask_for_label = cluster_labels == label
+                colored_pts = cluster_pts[mask_for_label]
+                if len(colored_pts) > 0:
+                    y_coords = np.clip(colored_pts[:, 1].astype(int), 0, image_rgb.shape[0] - 1)
+                    x_coords = np.clip(colored_pts[:, 0].astype(int), 0, image_rgb.shape[1] - 1)
+                    image_rgb[y_coords, x_coords] = colors[i]
+    
+    return image_rgb
+
+
+def save_clustered_image(image, points, labels, cluster_count, color_marker, input_filename):
+    """
+    Save clustered image to Results/GPU directory with descriptive filename.
+    
+    Parameters:
+        image (np.ndarray): Original binary image
+        points (np.ndarray): Array of points used for clustering
+        labels (np.ndarray): Cluster labels
+        cluster_count (int): Number of clusters found
+        color_marker (int): Background color marker
+        input_filename (str): Original input filename
+    """
+    # Create results/CPU directory if it doesn't exist
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(script_dir)
+    results_dir = os.path.join(parent_dir, "results", "GPU")
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Generate output filename
+    base_name = os.path.splitext(os.path.basename(input_filename))[0]
+    output_filename = f"{results_dir}/{base_name}_clusters_GPU.png"
+    
+    # Paint the clusters
+    image_colored = paint_clusters(image, points, labels, cluster_count, color_marker)
+    
+    # Save the image
+    plt.imsave(output_filename, image_colored)
+    print(f"cpu_dbscan: Clustered image saved as: {output_filename}")
+    
+    return image_colored
+
+
+def plot_clusters(points, labels, cluster_count, input_filename):
+    """
+    Create and save a scatter plot of the clusters for non-image data.
+    
+    Parameters:
+        points (np.ndarray): Array of points
+        labels (np.ndarray): Cluster labels
+        cluster_count (int): Number of clusters found
+        input_filename (str): Original input filename
+    """
+    # Create results/GPU directory if it doesn't exist
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(script_dir)
+    results_dir = os.path.join(parent_dir, "results", "GPU")
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Generate output filename
+    base_name = os.path.splitext(os.path.basename(input_filename))[0]
+    output_filename = f"{results_dir}/{base_name}_clusters_GPU.png"
+    
+    # Create figure
+    plt.figure(figsize=(10, 8))
+    
+    # Separate noise and clusters
+    noise_mask = labels == -1
+    cluster_mask = labels >= 0
+    
+    # Plot noise points in red
+    if np.any(noise_mask):
+        noise_points = points[noise_mask]
+        plt.scatter(noise_points[:, 0], noise_points[:, 1], 
+                   c='red', marker='x', s=10, alpha=0.6, label='Noise')
+    
+    # Plot clusters with different colors
+    if np.any(cluster_mask):
+        cluster_points = points[cluster_mask]
+        cluster_labels = labels[cluster_mask]
+        unique_labels = np.unique(cluster_labels)
+        
+        # Generate colors for clusters
+        colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
+        
+        for i, label in enumerate(unique_labels):
+            mask = cluster_labels == label
+            cluster_data = cluster_points[mask]
+            plt.scatter(cluster_data[:, 0], cluster_data[:, 1],
+                       c=[colors[i]], marker='o', s=20, alpha=0.7,
+                       label=f'Cluster {label}')
+    
+    plt.xlabel('X coordinate')
+    plt.ylabel('Y coordinate')
+    plt.title(f'DBSCAN Clustering - {cluster_count} clusters found')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Save the plot
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"cpu_dbscan: Cluster plot saved as: {output_filename}")
+    
+    
+# ---------------------------
 # Main execution
 # ---------------------------
 if __name__ == "__main__":
     print("gpu_dbscan: Starting GPU DBSCAN clustering")
 
-    # Start timing
-    start = time.time()
-    points, std_scale, min_pts = load_data()
+    print("=== GPU Info ===")
+    print(f"Number of devices: {cp.cuda.runtime.getDeviceCount()}")
 
+    # Current device
+    current_device = cp.cuda.runtime.getDevice()
+    props = cp.cuda.runtime.getDeviceProperties(current_device)
+    gpu_name = props['name'].decode()
+    print(f"Current device: {current_device} - {gpu_name}")
+    
+    print("=== Points Analysis ===")
+    # Start timing
+    start = time.perf_counter()
+    points, std_scale, min_pts, is_image, image_data = load_data()
     points_cpu = cp.asnumpy(points)
     print(f"gpu_dbscan: Number of points to cluster: {len(points_cpu)//2}")
-    
-    timePoints = time.time() # Time after points extraction
+    timePoints = time.perf_counter() # Time after points extraction
     print("gpu_dbscan: TimePoints = ", timePoints - start)
 
+    print("=== Epsilon Calculation ===")
     eps = get_epsilon(points, min_pts, std_scale=std_scale)
-    timeEpsilon = time.time() # Time after epsilon calculation
+    timeEpsilon = time.perf_counter() # Time after epsilon calculation
     print("gpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
+    print("=== DBSCAN Clustering ===")
     labels,cluster_count = dbscan(points, eps, min_pts,timeEpsilon=timeEpsilon)
     print(f"gpu_dbscan: Number of clusters found: {cluster_count}")
-    timeDBSCAN = time.time()
+    timeDBSCAN = time.perf_counter()
     print("gpu_dbscan: Time DBSCAN and graph construction = ", timeDBSCAN - timeEpsilon)
     
+    print("=== Cluster Properties Calculation ===")
     cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation = compute_cluster_properties(points, labels, cluster_count)
-    timeProperties = time.time()
+    timeProperties = time.perf_counter()
     print("gpu_dbscan: Time Properties = ", timeProperties - timeDBSCAN)
+    
+    # End timing
+    end = time.perf_counter()
+    print("gpu_dbscan: Total Time = ", end - start)
+    
+    print("gpu_dbscan: Finished clustering and property computation. Saving results...")
     cluster_centers_cpu = cp.asnumpy(cluster_centers)
     cluster_radii_cpu = cp.asnumpy(cluster_radii)
     cluster_eigenvalues_cpu = cp.asnumpy(cluster_eigenvalues)
     cluster_sizes_cpu = cp.asnumpy(cluster_sizes)
     cluster_eigenvalues_relation_cpu = cp.asnumpy(cluster_eigenvalues_relation)
+    labels_cpu = cp.asnumpy(labels)
+    points_cpu = cp.asnumpy(points).reshape(-1, 2)
     input_filename = sys.argv[1]  # Get the input filename from command line
     save_cluster_properties(cluster_centers_cpu, cluster_radii_cpu, cluster_eigenvalues_cpu, cluster_eigenvalues_relation_cpu, cluster_sizes_cpu, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
     create_cluster_histograms(cluster_sizes_cpu, cluster_radii_cpu, cluster_eigenvalues_relation_cpu, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
-    # End timing
-    end = time.time()
-    print("gpu_dbscan: Total Time = ", end - start)
+    if is_image:
+        # For images: paint clusters on the original image
+        image_bw, color_marker = image_data
+        clustered_image = save_clustered_image(
+            image_bw, points_cpu, labels_cpu, cluster_count, color_marker, input_filename
+        )
+    else:
+        # For NetCDF data: create a scatter plot
+        plot_clusters(points_cpu, labels_cpu, cluster_count, input_filename)
+    print("gpu_dbscan: All results saved successfully.")
+    print("gpu_dbscan: End of program.")
+    
+    
+    
 
 

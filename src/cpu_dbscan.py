@@ -961,38 +961,40 @@ def plot_clusters(points, labels, cluster_count, input_filename):
 # Main script
 # ---------------------------
 if __name__ == "__main__":
-    print("cpu_dbscan: time_starting CPU DBSCAN clustering")
+    print("cpu_dbscan: Starting CPU DBSCAN clustering")
     
+    print("=== Points Analysis ===")
+    # Start timing
     time_start = time.perf_counter()
-    
     points, std_scale, min_pts, is_image, image_data = load_data()
     print(f"cpu_dbscan: Number of points extracted: {len(points)}")
     time_points_extracted = time.perf_counter()
     print("cpu_dbscan: time points extracted = ", time_points_extracted - time_start)
 
-
+    print("=== Epsilon Calculation ===")
     epsilon = get_epsilon(points, min_pts,std_scale=std_scale)
     time_epsilon = time.perf_counter()
     print("cpu_dbscan: Time epsilon obtained = ", time_epsilon - time_points_extracted)
 
+    print("=== DBSCAN Clustering ===")
     labels,cluster_count = dbscan(points,epsilon,time_epsilon,min_pts)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
     timeDBSCAN = time.perf_counter()
     print("cpu_dbscan: Time DBSCAN and graph construction = ", timeDBSCAN - time_epsilon)
     
+    print("=== Cluster Properties Calculation ===")
     cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation = compute_cluster_properties(points, labels, cluster_count)
     timeProperties = time.perf_counter()
     print("cpu_dbscan: Time Properties = ", timeProperties - timeDBSCAN)
     
-    input_filename = sys.argv[1]  # Get the input filename from command line
-    save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
-    
-    create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_relation, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
-    
+    # end timing
     time_end = time.perf_counter()
     print("cpu_dbscan: Total time = ", time_end - time_start)
     
-    
+    print("cpu_dbscan: Finished clustering and property computation. Saving results...")
+    input_filename = sys.argv[1]  # Get the input filename from command line
+    save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
+    create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_relation, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
     if is_image:
         # For images: paint clusters on the original image
         image_bw, color_marker = image_data
@@ -1002,4 +1004,5 @@ if __name__ == "__main__":
     else:
         # For NetCDF data: create a scatter plot
         plot_clusters(points, labels, cluster_count, input_filename)
-
+    print("gpu_dbscan: All results saved successfully.")
+    print("gpu_dbscan: End of program.")
