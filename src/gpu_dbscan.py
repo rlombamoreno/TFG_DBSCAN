@@ -14,14 +14,30 @@ CuPy for GPU acceleration and CUDA kernels for parallel computation.
 It supports input from common image files (JPEG/PNG) and NetCDF files.
 
 Usage:
-    python3 gpu_dbscan.py <input_filename> [std_scale]
+     python3 gpu_dbscan.py <input_file> [OPTIONS]
 
-    - <input_filename> : Path to an image (.jpg, .png) or a NetCDF (.nc) file.
-    - [std_scale]      : Optional float in [0, 1] used to scale the std in the
-                         epsilon heuristic. If omitted, std_scale defaults to 1.0.
-    - [min_pts]         : Optional integer for minimum points parameter.
-                          If omitted, calculated as 2*dimension + 1.
+    Arguments:
+    <input_file>         : Path to an image (.jpg, .jpeg, .png) or a NetCDF (.nc) file.
+                           This argument is REQUIRED.
 
+    Options:
+    --std_scale VALUE    : Optional float in [0, 1] used to scale the std in the
+                           epsilon heuristic. If omitted, std_scale defaults to 1.0.
+    --min_pts VALUE      : Optional integer for minimum points parameter.
+                           If omitted, calculated as 2*dimension + 1.
+    --eps VALUE          : Optional float for epsilon distance parameter.
+                           If provided, skips automatic epsilon calculation.
+
+    Examples:
+    python3 gpu_dbscan_ctypes.py imagen.jpg
+    python3 gpu_dbscan_ctypes.py imagen.jpg --min_pts 10
+    python3 gpu_dbscan_ctypes.py imagen.jpg --std_scale 0.8 --min_pts 5
+    python3 gpu_dbscan_ctypes.py imagen.jpg --eps 2.5
+    python3 gpu_dbscan_ctypes.py datos.nc --min_pts 15
+
+    Note: For images, the script automatically detects background color and applies
+    appropriate thresholding for binary conversion
+    
 Dependencies:
     - cupy
     - numpy
@@ -53,50 +69,84 @@ THREADS_PER_BLOCK = 256
 # ---------------------------
 def load_parameters():
     """
-    Load optional parameters from command line arguments.
+    Load optional parameters from command line arguments with named flags.
 
     Returns:
-        tuple: (std_scale: float, min_pts: int)
+        tuple: (std_scale: float or None, min_pts: int or None, eps: float or None)
     """
-    std_scale = 1.0  # default value
-    min_pts = None   # will be calculated based on dimension
+    # Default values
+    std_scale = None
+    min_pts = None
+    eps = None
+    input_filename = None
     
     # Parse command line arguments
-    if len(sys.argv) >= 3:
-        try:
-            std_scale = float(sys.argv[2])
-            if std_scale < 0 or std_scale > 1:
-                print("gpu_dbscan: std_scale must be between 0 and 1")
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        
+        if arg == "--std_scale" and i + 1 < len(sys.argv):
+            try:
+                std_scale = float(sys.argv[i + 1])
+                if std_scale < 0 or std_scale > 1:
+                    print("gpu_dbscan: std_scale must be between 0 and 1")
+                    sys.exit(1)
+                print(f"gpu_dbscan: Using user-provided std_scale: {std_scale}")
+            except ValueError:
+                print("gpu_dbscan: std_scale must be a float between 0 and 1")
                 sys.exit(1)
-            print(f"gpu_dbscan: Using user-provided std_scale: {std_scale}")
-        except ValueError:
-            print("gpu_dbscan: std_scale must be a float between 0 and 1")
-            sys.exit(1)
-    else:
-        print("gpu_dbscan: Using default std_scale: 1.0")
-    
-    if len(sys.argv) >= 4:
-        try:
-            min_pts = int(sys.argv[3])
-            if min_pts < 1:
+            i += 2
+            
+        elif arg == "--min_pts" and i + 1 < len(sys.argv):
+            try:
+                min_pts = int(sys.argv[i + 1])
+                if min_pts < 1:
+                    print("gpu_dbscan: min_pts must be a positive integer")
+                    sys.exit(1)
+                print(f"gpu_dbscan: Using user-provided min_pts: {min_pts}")
+            except ValueError:
                 print("gpu_dbscan: min_pts must be a positive integer")
                 sys.exit(1)
-        except ValueError:
-            print("gpu_dbscan: min_pts must be a positive integer")
-            sys.exit(1)
+            i += 2
+            
+        elif arg == "--eps" and i + 1 < len(sys.argv):
+            try:
+                eps = float(sys.argv[i + 1])
+                if eps <= 0:
+                    print("gpu_dbscan: eps must be a positive float")
+                    sys.exit(1)
+                print(f"gpu_dbscan: Using user-provided eps: {eps}")
+            except ValueError:
+                print("gpu_dbscan: eps must be a positive float")
+                sys.exit(1)
+            i += 2
+            
+        elif arg.startswith("--"):
+            print(f"gpu_dbscan: Warning: Unknown argument {arg}")
+            i += 1
+        else:
+            # Assume this is the input file (required)
+            input_filename = arg
+            i += 1
     
-    return std_scale, min_pts
+    # Validate that we have an input file
+    if input_filename is None:
+        print("gpu_dbscan: Error: Must specify an input file (image or netCDF)")
+        print("Usage: python3 gpu_dbscan.py <input_file> [--std_scale VALUE] [--min_pts VALUE] [--eps VALUE]")
+        print("Example: python3 gpu_dbscan.py imagen.jpg --min_pts 10")
+        print("Example: python3 gpu_dbscan.py imagen.jpg --std_scale 0.8 --min_pts 5")
+        print("Example: python3 gpu_dbscan.py datos.nc --eps 2.5")
+        sys.exit(1)
+    
+    return input_filename, std_scale, min_pts, eps
 
-def calculate_min_pts(user_min_pts=None):
+
+def calculate_min_pts():
     """
     Calculate min_pts parameter. If user provided, use that value.
     Otherwise, calculate as 2*dimension + 1.
     For image analysis, dimension is always 2.
     """
-    if user_min_pts is not None:
-        print(f"gpu_dbscan: Using user-provided min_pts: {user_min_pts}")
-        return user_min_pts
-    
     # For image analysis, dimension is always 2 (x, y coordinates)
     dimension = 2
     calculated_min_pts = 2 * dimension + 1
@@ -104,39 +154,45 @@ def calculate_min_pts(user_min_pts=None):
     return calculated_min_pts
 
 
-
 def load_data():
     """
     Load points from an image (.jpg/.png) or NetCDF (.nc) file.
 
     Returns:
-        tuple: (points: cp.ndarray of shape (N*2,), std_scale: float, min_pts: int)
+        tuple: (points: cp.ndarray of shape (N*2,), std_scale: float or None, 
+                min_pts: int or None, eps: float or None, is_image: bool, image_data)
     """
-    if len(sys.argv) < 2:
-        print("gpu_dbscan: Must specify one supported file, either image or netCDF")
-        print("example: python3 script.py <filename> [std_scale] [min_pts]")
-        sys.exit(1)
+    input_filename, std_scale, user_min_pts, eps = load_parameters()
     
-    std_scale, user_min_pts = load_parameters()
-    filename = sys.argv[1]
-    ext = os.path.splitext(filename)[1].lower()
+    ext = os.path.splitext(input_filename)[1].lower()
     is_image = False
     image_data = None
     
-    if ext == ".jpg" or ext == ".png":
-        points,image_bw, color_marker = load_image(filename)
+    if ext in [".jpg", ".jpeg", ".png"]:
+        points, image_bw, color_marker = load_image(input_filename)
         is_image = True
         image_data = (image_bw, color_marker)
     elif ext == ".nc":
-        points = load_netcdf(filename)
+        points = load_netcdf(input_filename)
     else:
         print(f"gpu_dbscan: Unsupported file extension: {ext}")
+        print("Supported: .jpg, .jpeg, .png, .nc")
         sys.exit(1)
     
-    # Calculate min_pts (always 2D for images)
-    min_pts = calculate_min_pts(user_min_pts)
+    # Calculate min_pts if not provided
+    if user_min_pts is not None:
+        min_pts = user_min_pts
+        print(f"gpu_dbscan: Using user-provided min_pts: {min_pts}")
+    else:
+        min_pts = calculate_min_pts()
+        print(f"gpu_dbscan: Using calculated min_pts: {min_pts}")
     
-    return points, std_scale, min_pts, is_image, image_data
+    # If std_scale not provided, use default value
+    if std_scale is None:
+        std_scale = 1.0
+        print("gpu_dbscan: Using default std_scale: 1.0")
+    
+    return points, std_scale, min_pts, eps, is_image, image_data
 
 
 def load_image(image_filename):
@@ -152,14 +208,33 @@ def load_image(image_filename):
     image_orig = Image.open(image_filename)
     print(f"gpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
     
-    image_bw = cp.array(image_orig.convert('1'), dtype=int)
-    hist = compute_histogram(image_bw)
+    # Convert to grayscale
+    image_gray = image_orig.convert('L')
+    gray_array = np.array(image_gray)
+    
+    # Find the most common pixel value (background)
+    values, counts = np.unique(gray_array, return_counts=True)
+    mode_index = np.argmax(counts)
+    background_value = values[mode_index]
+    
+    # Adjust threshold based on background
+    if background_value < 50:  
+        threshold = background_value + 50 
+    else:
+        threshold = background_value - 50 
+    
+    # Use the threshold to create a binary image
+    image_bw = image_gray.point(lambda x: 255 if x > threshold else 0)
+    image_array = cp.array(image_bw, dtype=int)
+    image_array = cp.where(image_array == 255, 1, 0)
+    
+    hist = compute_histogram(image_array)
     # color_marker indicates the background color; get_points_in_cluster extracts only foreground pixels
     color_marker = 1 if hist[0] < hist[1] else 0
     
-    points = get_points_in_cluster(image_bw, color_marker)
-    image_bw = np.array(image_bw.get(), dtype=int) 
-    return points, image_bw, color_marker
+    points = get_points_in_cluster(image_array, color_marker)
+    image_array = np.array(image_array.get(), dtype=int)
+    return points, image_array, color_marker
 
 
 def load_netcdf(nc_filename):
@@ -322,22 +397,27 @@ def get_points_in_cluster(image, color_marker):
 # ---------------------------
 # Epsilon calculation functions
 # ---------------------------
-def get_epsilon(points, k,std_scale):
+def get_epsilon(points, k,std_scale, user_eps=None):
     """
-    Compute the adaptive epsilon using k-distances and standard deviation.
-
+    Compute epsilon - either use user-provided or calculate automatically.
+    
     Parameters:
         points (cp.ndarray): Flattened array of points
-        k (int): Number of neighbors for k-distance
+        min_pts (int): Number of neighbors for k-distance
         std_scale (float): Scaling factor for standard deviation
-
+        user_eps (float or None): User-provided epsilon value
+        
     Returns:
-        cp.ndarray: Recommended epsilon value
+        cp.ndarray: Epsilon value
     """
+    if user_eps is not None:
+        print(f"gpu_dbscan: Using user-provided epsilon: {user_eps}")
+        epsilon = cp.array([user_eps], dtype=cp.float32)
+        return epsilon
     kn_distances = compute_kn_distances(points, k) # k-distances
     # Heuristic: epsilon = mean + std_dev * std_scale
     epsilon = cp.zeros(1, dtype=cp.float32)
-    epsilon[0]= cp.mean(kn_distances) + cp.std(kn_distances) * std_scale
+    epsilon[0] = cp.mean(kn_distances) + cp.std(kn_distances) * std_scale
 
     print(f"gpu_dbscan: Recommended epsilon: {epsilon[0]}")
     return epsilon
@@ -786,8 +866,9 @@ def compute_cluster_properties(points, labels, cluster_count):
 #---------------------------
 #Save cluster properties
 #---------------------------
-def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, 
-                           input_filename=None, std_scale=None, min_pts=None):
+def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, 
+                           cluster_eigenvalues_relation, cluster_sizes, 
+                           input_filename=None, std_scale=None, min_pts=None, eps=None):
     """
     Save cluster properties to a file in results/GPU folder with descriptive name.
     """
@@ -799,19 +880,28 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     output_dir = "results/GPU"
     os.makedirs(output_dir, exist_ok=True)
     
-    base_name = os.path.splitext(os.path.basename(input_filename))[0]
-    
-    # Include parameters in filename
-    param_str = ""
-    if std_scale is not None and min_pts is not None:
-        param_str = f"_s{std_scale}_m{min_pts}"
-    elif std_scale is not None:
-        param_str = f"_s{std_scale}"
-    elif min_pts is not None:
-        param_str = f"_m{min_pts}"
+    # Generate output filename
+    if input_filename is None:
+        filename = os.path.join(output_dir, "cluster_properties.txt")
+    else:
+        base_name = os.path.splitext(os.path.basename(input_filename))[0]
         
-    filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
-
+        # Include parameters in filename
+        param_parts = []
+        if std_scale is not None:
+            param_parts.append(f"s{std_scale}")
+        if min_pts is not None:
+            param_parts.append(f"m{min_pts}")
+        if eps is not None:
+            param_parts.append(f"e{eps}")
+        
+        if param_parts:
+            param_str = "_" + "_".join(param_parts)
+        else:
+            param_str = ""
+            
+        filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
+    
     with open(filename, 'w') as f:
         # Write header with parameters
         if input_filename:
@@ -820,6 +910,8 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
             f.write(f"# std_scale: {std_scale}\n")
         if min_pts is not None:
             f.write(f"# min_pts: {min_pts}\n")
+        if eps is not None:
+            f.write(f"# eps: {eps}\n")
         f.write("# cluster_id num_points center_x center_y gyration_radius lambda1 lambda2 relation_between_lambdas\n")
         
         for i in range(cluster_count):
@@ -882,24 +974,24 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     
     # Histogram 1: Cluster sizes
     axes[0].hist(sizes, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
-    axes[0].set_xlabel('Tamaño del Cluster (número de puntos)')
-    axes[0].set_ylabel('Frecuencia')
-    axes[0].set_title('Distribución de Tamaños de Clusters')
+    axes[0].set_xlabel('Cluster Size (Number of Points)')
+    axes[0].set_ylabel('Frequency')
+    axes[0].set_title('Cluster Size Distribution')
     axes[0].grid(True, alpha=0.3)
     # Add statistics
-    axes[0].axvline(np.mean(sizes), color='red', linestyle='--', label=f'Media: {np.mean(sizes):.1f}')
-    axes[0].axvline(np.median(sizes), color='green', linestyle='--', label=f'Mediana: {np.median(sizes):.1f}')
+    axes[0].axvline(np.mean(sizes), color='red', linestyle='--', label=f'Mean: {np.mean(sizes):.1f}')
+    axes[0].axvline(np.median(sizes), color='green', linestyle='--', label=f'Median: {np.median(sizes):.1f}')
     axes[0].legend()
     
     # Histogram 2: Gyration radii
     axes[1].hist(radii, bins=20, alpha=0.7, color='lightgreen', edgecolor='black')
-    axes[1].set_xlabel('Radio de Giro')
-    axes[1].set_ylabel('Frecuencia')
-    axes[1].set_title('Distribución de Radios de Giro')
+    axes[1].set_xlabel('Gyration Radius')
+    axes[1].set_ylabel('Frequency')
+    axes[1].set_title('Gyration Radius Distribution')
     axes[1].grid(True, alpha=0.3)
     # Add statistics
-    axes[1].axvline(np.mean(radii), color='red', linestyle='--', label=f'Media: {np.mean(radii):.2f}')
-    axes[1].axvline(np.median(radii), color='green', linestyle='--', label=f'Mediana: {np.median(radii):.2f}')
+    axes[1].axvline(np.mean(radii), color='red', linestyle='--', label=f'Mean: {np.mean(radii):.2f}')
+    axes[1].axvline(np.median(radii), color='green', linestyle='--', label=f'Median: {np.median(radii):.2f}')
     axes[1].legend()
     
     # Histogram 3: Eigenvalue relations (shape anisotropy)
@@ -908,22 +1000,22 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     valid_relations = valid_relations[valid_relations < np.percentile(valid_relations, 95)]  # Remove outliers
     
     axes[2].hist(valid_relations, bins=20, alpha=0.7, color='salmon', edgecolor='black')
-    axes[2].set_xlabel(r'Relación $\lambda_{\max} / \lambda_{\min}$')
-    axes[2].set_ylabel('Frecuencia')
-    axes[2].set_title('Distribución Relacion de Autovalores del Tensor de Inercia')
+    axes[2].set_xlabel(r'Relationship $\lambda_{\max} / \lambda_{\min}$')
+    axes[2].set_ylabel('Frequency')
+    axes[2].set_title('Eigenvalue Relationship Distribution of the Inertia Tensor')
     axes[2].grid(True, alpha=0.3)
     # Add statistics and interpretation
     mean_rel = np.mean(valid_relations)
-    axes[2].axvline(mean_rel, color='red', linestyle='--', label=f'Media: {mean_rel:.2f}')
-    axes[2].axvline(1.0, color='blue', linestyle='-', alpha=0.5, label='Perfectamente circular')
+    axes[2].axvline(mean_rel, color='red', linestyle='--', label=f'Mean: {mean_rel:.2f}')
+    axes[2].axvline(1.0, color='blue', linestyle='-', alpha=0.5, label='Perfectly circular')
     
     # Add shape interpretation
     if mean_rel < 1.5:
-        shape_text = "Formas mayormente circulares"
+        shape_text = "Mostly circular shapes"
     elif mean_rel < 3.0:
-        shape_text = "Mezcla de formas"
+        shape_text = "Mixed shapes"
     else:
-        shape_text = "Formas mayormente alargadas"
+        shape_text = "Mostly elongated shapes"
     
     axes[2].text(0.05, 0.95, shape_text, transform=axes[2].transAxes, 
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
@@ -1128,6 +1220,7 @@ def plot_clusters(points, labels, cluster_count, input_filename):
 # Main execution
 # ---------------------------
 if __name__ == "__main__":
+    print("===========================================")
     print("gpu_dbscan: Starting GPU DBSCAN clustering")
     
     print("=== GPU Info ===")
@@ -1141,14 +1234,14 @@ if __name__ == "__main__":
     print("=== Points Analysis ===")
     # Start timing
     start = time.perf_counter()
-    points, std_scale, min_pts, is_image, image_data = load_data()
+    points, std_scale, min_pts, eps_user, is_image, image_data = load_data()
     points_cpu = cp.asnumpy(points)
     print(f"gpu_dbscan: Number of points to cluster: {len(points_cpu)//2}")
     timePoints = time.perf_counter() # Time after points extraction
     print("gpu_dbscan: TimePoints = ", timePoints - start)
 
     print("=== Epsilon Calculation ===")
-    eps = get_epsilon(points, min_pts, std_scale=std_scale)
+    eps = get_epsilon(points, min_pts, std_scale=std_scale, user_eps=eps_user)
     timeEpsilon = time.perf_counter() # Time after epsilon calculation
     print("gpu_dbscan: TimeEpsilon = ", timeEpsilon - timePoints)
 
@@ -1190,6 +1283,7 @@ if __name__ == "__main__":
         plot_clusters(points_cpu, labels_cpu, cluster_count, input_filename)
     print("gpu_dbscan: All results saved successfully.")
     print("gpu_dbscan: End of program.")
+    print("===========================================")
     
     
     

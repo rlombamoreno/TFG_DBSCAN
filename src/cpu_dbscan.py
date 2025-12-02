@@ -11,21 +11,34 @@ Version: 1.0
 Description:
 This script implements the DBSCAN algorithm for image segmentation using
 vectorized NumPy operations and an adaptive epsilon calculation method.
-It supports input from common image files (JPEG/PNG) and NetCDF files
-(containing coordinate arrays).
+It supports input from common image files (JPEG/PNG) and NetCDF files.
 
 Usage:
-    python3 cpu_dbscan.py <input_filename> [std_scale] [min_pts]
+    python3 cpu_dbscan.py <input_file> [OPTIONS]
 
-    - <input_filename> : Path to an image (.jpg, .png) or a NetCDF (.nc) file.
-    - [std_scale]      : Optional float in [0, 1] used to scale the std in the
-                         epsilon heuristic. If omitted, std_scale defaults to 1.0.
-    - [min_pts]        : Optional integer for minimum points parameter.
-                         If omitted, calculated as 2*dimension + 1.
+    Arguments:
+    <input_file>         : Path to an image (.jpg, .jpeg, .png) or a NetCDF (.nc) file.
+                           This argument is REQUIRED.
+
+    Options:
+    --std_scale VALUE    : Optional float in [0, 1] used to scale the std in the
+                           epsilon heuristic. If omitted, std_scale defaults to 1.0.
+    --min_pts VALUE      : Optional integer for minimum points parameter.
+                           If omitted, calculated as 2*dimension + 1.
+    --eps VALUE          : Optional float for epsilon distance parameter.
+                           If provided, skips automatic epsilon calculation.
+
+    Examples:
+    python3 cpu_dbscan.py imagen.jpg
+    python3 cpu_dbscan.py imagen.jpg --min_pts 10
+    python3 cpu_dbscan.py imagen.jpg --std_scale 0.8 --min_pts 5
+    python3 cpu_dbscan.py imagen.jpg --eps 2.5
+    python3 cpu_dbscan.py datos.nc --min_pts 15
+    python3 cpu_dbscan.py imagen.jpg --std_scale 0.7 --min_pts 8 --eps 3.0
 
 Dependencies:
     - numpy
-    - pillow
+    - pillow (PIL)
     - matplotlib
     - netCDF4
     - numba
@@ -49,71 +62,88 @@ INF = 1e20
 
 
 # ---------------------------
-# Data loading functions
+# Parameter loading functions
 # ---------------------------
-def load_std_scale():
-    """
-    Load the optional standard deviation scale from command line arguments.
-
-    Returns:
-        float: std_scale in range [0, 1], default is 1.0 if not provided.
-    """
-    
-    if len(sys.argv) != 3:
-        print("cpu_dbscan: Using default std_scale=1")
-        return 1.00
-    std_scale = float(sys.argv[2])
-    if std_scale < 0 or std_scale > 1:
-        print("cpu_dbscan: std_scale must be between 0 and 1")
-        sys.exit(1)
-    return std_scale
-
 def load_parameters():
     """
-    Load optional parameters from command line arguments.
+    Load optional parameters from command line arguments with named flags.
 
     Returns:
-        tuple: (std_scale: float, min_pts: int)
+        tuple: (input_filename, std_scale: float or None, min_pts: int or None, eps: float or None)
     """
-    std_scale = 1.0  # default value
-    min_pts = None   # will be calculated based on dimension
+    # Default values
+    std_scale = None
+    min_pts = None
+    eps = None
+    input_filename = None
     
     # Parse command line arguments
-    if len(sys.argv) >= 3:
-        try:
-            std_scale = float(sys.argv[2])
-            if std_scale < 0 or std_scale > 1:
-                print("cpu_dbscan: std_scale must be between 0 and 1")
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        
+        if arg == "--std_scale" and i + 1 < len(sys.argv):
+            try:
+                std_scale = float(sys.argv[i + 1])
+                if std_scale < 0 or std_scale > 1:
+                    print("cpu_dbscan: std_scale must be between 0 and 1")
+                    sys.exit(1)
+                print(f"cpu_dbscan: Using user-provided std_scale: {std_scale}")
+            except ValueError:
+                print("cpu_dbscan: std_scale must be a float between 0 and 1")
                 sys.exit(1)
-            print(f"cpu_dbscan: Using user-provided std_scale: {std_scale}")
-        except ValueError:
-            print("cpu_dbscan: std_scale must be a float between 0 and 1")
-            sys.exit(1)
-    else:
-        print("cpu_dbscan: Using default std_scale: 1.0")
-    if len(sys.argv) >= 4:
-        try:
-            min_pts = int(sys.argv[3])
-            if min_pts < 1:
+            i += 2
+            
+        elif arg == "--min_pts" and i + 1 < len(sys.argv):
+            try:
+                min_pts = int(sys.argv[i + 1])
+                if min_pts < 1:
+                    print("cpu_dbscan: min_pts must be a positive integer")
+                    sys.exit(1)
+                print(f"cpu_dbscan: Using user-provided min_pts: {min_pts}")
+            except ValueError:
                 print("cpu_dbscan: min_pts must be a positive integer")
                 sys.exit(1)
-        except ValueError:
-            print("cpu_dbscan: min_pts must be a positive integer")
-            sys.exit(1)
+            i += 2
+            
+        elif arg == "--eps" and i + 1 < len(sys.argv):
+            try:
+                eps = float(sys.argv[i + 1])
+                if eps <= 0:
+                    print("cpu_dbscan: eps must be a positive float")
+                    sys.exit(1)
+                print(f"cpu_dbscan: Using user-provided eps: {eps}")
+            except ValueError:
+                print("cpu_dbscan: eps must be a positive float")
+                sys.exit(1)
+            i += 2
+            
+        elif arg.startswith("--"):
+            print(f"cpu_dbscan: Warning: Unknown argument {arg}")
+            i += 1
+        else:
+            # Assume this is the input file (required)
+            input_filename = arg
+            i += 1
     
-    return std_scale, min_pts
+    # Validate that we have an input file
+    if input_filename is None:
+        print("cpu_dbscan: Error: Must specify an input file (image or netCDF)")
+        print("Usage: python3 cpu_dbscan.py <input_file> [--std_scale VALUE] [--min_pts VALUE] [--eps VALUE]")
+        print("Example: python3 cpu_dbscan.py imagen.jpg --min_pts 10")
+        print("Example: python3 cpu_dbscan.py imagen.jpg --std_scale 0.8 --min_pts 5")
+        print("Example: python3 cpu_dbscan.py datos.nc --eps 2.5")
+        sys.exit(1)
+    
+    return input_filename, std_scale, min_pts, eps
 
 
-def calculate_min_pts(points, user_min_pts=None):
+def calculate_min_pts():
     """
     Calculate min_pts parameter. If user provided, use that value.
     Otherwise, calculate as 2*dimension + 1.
     For image analysis, dimension is always 2.
-    """
-    if user_min_pts is not None:
-        print(f"cpu_dbscan: Using user-provided min_pts: {user_min_pts}")
-        return user_min_pts
-    
+    """   
     # For image analysis, dimension is always 2 (x, y coordinates)
     dimension = 2
     calculated_min_pts = 2 * dimension + 1
@@ -126,38 +156,46 @@ def load_data():
     Load points from an image (.jpg/.png) or NetCDF (.nc) file.
 
     Returns:
-        tuple: (points: np.ndarray of shape (N,2), std_scale: float)
+        tuple: (points: np.ndarray, std_scale: float, min_pts: int, eps: float or None, 
+                is_image: bool, image_data, input_filename: str)
     """
+    input_filename, std_scale, user_min_pts, eps = load_parameters()
     
-    if len(sys.argv) < 2:
-        print("cpu_dbscan: Must specify one supported file, either image or netCDF")
-        print("example: python3 script.py <filename> [std_scale] [min_pts]")
-        sys.exit(1)
-        
-        
-    std_scale, min_pts = load_parameters()
-    filename = sys.argv[1]
-    ext = os.path.splitext(filename)[1].lower()
-    
+    ext = os.path.splitext(input_filename)[1].lower()
     is_image = False
     image_data = None
     
-    if ext == ".jpg" or ext == ".png":
-        points,image_bw, color_marker = load_image(filename)
+    if ext in [".jpg", ".jpeg", ".png"]:
+        points, image_bw, color_marker = load_image(input_filename)
         is_image = True
         image_data = (image_bw, color_marker)
     elif ext == ".nc":
-        points = load_netcdf(filename)
+        points = load_netcdf(input_filename)
     else:
         print(f"cpu_dbscan: Unsupported file extension: {ext}")
+        print("Supported: .jpg, .jpeg, .png, .nc")
         sys.exit(1)
-    min_pts = calculate_min_pts(points, min_pts)
-    return points, std_scale, min_pts, is_image, image_data
+    
+    # Calculate min_pts if not provided
+    if user_min_pts is not None:
+        min_pts = user_min_pts
+        print(f"cpu_dbscan: Using user-provided min_pts: {min_pts}")
+    else:
+        min_pts = calculate_min_pts()
+        print(f"cpu_dbscan: Using calculated min_pts: {min_pts}")
+    
+    # If std_scale not provided, use default value
+    if std_scale is None:
+        std_scale = 1.0
+        print("cpu_dbscan: Using default std_scale: 1.0")
+    
+    return points, std_scale, min_pts, eps, is_image, image_data, input_filename
 
 
 def load_image(image_filename):
     """
     Convert a binary image to a list of points corresponding to the cluster color.
+    Uses automatic threshold based on background detection.
 
     Parameters:
         image_filename (str): Path to image file
@@ -169,14 +207,36 @@ def load_image(image_filename):
     image_orig = Image.open(image_filename)
     print(f"cpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
     
-    image_bw = np.array(image_orig.convert('1'), dtype=int)
-    hist = compute_histogram(image_bw)
+    # Convert to grayscale
+    image_gray = image_orig.convert('L')
+    gray_array = np.array(image_gray)
+    
+    # Find the most common pixel value (background)
+    values, counts = np.unique(gray_array, return_counts=True)
+    index_mode = np.argmax(counts)
+    background_value = values[index_mode]
+    
+    
+    # Adjust threshold based on background
+    if background_value < 50: 
+        threshold = background_value + 50 
+    else: 
+        threshold = background_value - 50 
+    
+    
+    # Use the threshold to create a binary image
+    image_bw = image_gray.point(lambda x: 255 if x > threshold else 0)
+    
+    image_array = np.array(image_bw, dtype=int)
+    image_array = np.where(image_array == 255, 1, 0)
+    
+    hist = compute_histogram(image_array)
     
     # color_marker indicates the background color; get_points_in_cluster extracts only foreground pixels
     color_marker = 1 if hist[0] < hist[1] else 0
     
-    points = get_points_in_cluster(image_bw, color_marker)
-    return points, image_bw, color_marker
+    points = get_points_in_cluster(image_array, color_marker)
+    return points, image_array, color_marker
 
 
 def load_netcdf(netcdf_filename):
@@ -268,14 +328,6 @@ def get_points_in_cluster(image, color_marker):
     return points
 
 
-def save_image(image_colored):
-    image_filename = sys.argv[1]
-    name, ext = os.path.splitext(image_filename)
-    output_filename = f"{name}_clusters_CPU.png"
-    plt.imsave(output_filename, image_colored)
-    print(f"cpu_dbscan: Clustered image saved as: {output_filename}")
-
-
 # ---------------------------
 # DBSCAN algorithm functions
 # ---------------------------
@@ -313,19 +365,25 @@ def compute_kn_distances(points, k):
     return kn_distances
 
 
-def get_epsilon(points, k, std_scale):
+def get_epsilon(points, k, std_scale, user_eps=None):
     """
-    Compute the adaptive epsilon using k-distances and standard deviation.
-
+    Compute epsilon - either use user-provided or calculate automatically.
+    
     Parameters:
         points (np.ndarray): Nx2 array of points
         k (int): Number of neighbors for k-distance
         std_scale (float): Scaling factor for standard deviation
-
+        user_eps (float or None): User-provided epsilon value
+        
     Returns:
         float: Recommended epsilon
     """
+    if user_eps is not None:
+        print(f"cpu_dbscan: Using user-provided epsilon: {user_eps}")
+        return user_eps
     
+    # Automatic epsilon calculation
+    print("cpu_dbscan: Calculating epsilon automatically...")
     kn_distances = compute_kn_distances(points, k)
     epsilon = np.mean(kn_distances) + np.std(kn_distances) * std_scale
     print(f"cpu_dbscan: Recommended epsilon: {epsilon}")
@@ -369,7 +427,7 @@ def neighbor_count(points, epsilon, is_core_point, adjacency_info, min_pts):
 
 
 @jit(nopython=True)
-def build_adjacency_info(points, epsilon, adjacency_info,min_pts):
+def build_adjacency_info(points, epsilon, adjacency_info, min_pts):
     """
     Build adjacency information for DBSCAN (core points and neighbor list).
 
@@ -385,8 +443,8 @@ def build_adjacency_info(points, epsilon, adjacency_info,min_pts):
             adjacent_list (np.ndarray): Flattened adjacency list of neighbor indices
     """
     
-    is_core_point = np.zeros(len(points), dtype=np.int32)-1
-    count_total_neigbours = neighbor_count(points, epsilon, is_core_point, adjacency_info,min_pts)
+    is_core_point = np.zeros(len(points), dtype=np.int32) - 1
+    count_total_neigbours = neighbor_count(points, epsilon, is_core_point, adjacency_info, min_pts)
     # compute the starting index in the flattened neighbor array for each point
     adjacency_info[1:,1] = np.cumsum(adjacency_info[:-1,0])
     adjacent_list = np.zeros(count_total_neigbours, dtype=np.int32)
@@ -425,7 +483,7 @@ def dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, 
     
     cluster_id = 0
     border_points = np.zeros(len(points), dtype=np.int32)
-    active_flag = 0;
+    active_flag = 0
     for point_index in range(len(points)):
         if labels[point_index] == -1 and is_core_point[point_index] == 1:
             # Expand the cluster starting from a core point; border_points marks the active frontier
@@ -452,7 +510,7 @@ def dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, 
     return cluster_id
 
 
-def dbscan(points, epsilon,time_epsilon, min_pts):
+def dbscan(points, epsilon, time_epsilon, min_pts):
     """
     Run DBSCAN with adjacency information and measure time.
 
@@ -467,13 +525,13 @@ def dbscan(points, epsilon,time_epsilon, min_pts):
     """
     
     adjacency_info = np.zeros((len(points), 2), dtype=np.int32)
-    is_core_point, adjacent_list = build_adjacency_info(points, epsilon, adjacency_info,min_pts)
+    is_core_point, adjacent_list = build_adjacency_info(points, epsilon, adjacency_info, min_pts)
     time_adjacency_info = time.perf_counter()
     print("cpu_dbscan: Time graph construction = ", time_adjacency_info - time_epsilon)
     labels = np.zeros(len(points), dtype=np.int32) - 1
     cluster_count = dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, adjacency_info)
     print("cpu_dbscan: Time DBSCAN = ", time.perf_counter() - time_adjacency_info)
-    return labels,cluster_count
+    return labels, cluster_count
 
 
 # ---------------------------
@@ -484,14 +542,14 @@ def compute_cluster_properties(points, labels, cluster_count):
     Compute cluster properties: mass center and gyration radius.
     
     Parameters:
-        points (np.ndarray): Array of points (N, 2) or flattened array
+        points (np.ndarray): Array of points (N, 2)
         labels (np.ndarray): Cluster labels for each point
         cluster_count (int): Number of clusters found
         
     Returns:
         tuple: (cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation)
     """
-      # Ensure points is in (N, 2) shape
+    # Ensure points is in (N, 2) shape
     if points.ndim == 1:
         num_points = len(points) // 2
         points_2d = points.reshape(-1, 2)
@@ -509,16 +567,16 @@ def compute_cluster_properties(points, labels, cluster_count):
                 np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int32),
                 np.empty(0, dtype=np.float32))
 
-    # Calculate cluster sizes using the same method as CPU
+    # Calculate cluster sizes
     cluster_sizes = np.zeros(cluster_count, dtype=np.int32)
     for i in range(cluster_count):
         cluster_sizes[i] = np.sum(valid_labels == i)
     
-    # Organize cluster indices using the same graph structure as CPU DBSCAN
+    # Organize cluster indices
     cluster_indices = []
     cluster_offsets = np.zeros(cluster_count, dtype=np.int32)
     
-    # Build cluster offsets (similar to GPU version but in series)
+    # Build cluster offsets
     if cluster_count > 0:
         cluster_offsets[0] = 0
         for i in range(1, cluster_count):
@@ -543,7 +601,7 @@ def compute_cluster_properties(points, labels, cluster_count):
     cluster_eigenvalues = np.zeros(cluster_count * 2, dtype=np.float32)
     cluster_eigenvalues_relation = np.zeros(cluster_count, dtype=np.float32)
     
-    # Compute properties for each cluster using the graph structure
+    # Compute properties for each cluster
     for cluster_id in range(cluster_count):
         cluster_size = cluster_sizes[cluster_id]
         
@@ -611,17 +669,17 @@ def compute_cluster_properties(points, labels, cluster_count):
     
     return cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation
 
+
 #---------------------------
 # Save cluster properties
 #---------------------------
-def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, 
-                           input_filename=None, std_scale=None, min_pts=None):
+def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, 
+                           cluster_eigenvalues_relation, cluster_sizes, 
+                           input_filename=None, std_scale=None, min_pts=None, eps=None):
     """
     Save cluster properties to a file in results/CPU folder with descriptive name.
     """
     cluster_count = len(cluster_sizes)
-    
-    import os
     
     # Create results/CPU directory if it doesn't exist
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -629,18 +687,27 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     results_dir = os.path.join(parent_dir, "results", "CPU")
     os.makedirs(results_dir, exist_ok=True)
     
-    base_name = os.path.splitext(os.path.basename(input_filename))[0]
-    
-    # Include parameters in filename
-    param_str = ""
-    if std_scale is not None and min_pts is not None:
-        param_str = f"_s{std_scale}_m{min_pts}"
-    elif std_scale is not None:
-        param_str = f"_s{std_scale}"
-    elif min_pts is not None:
-        param_str = f"_m{min_pts}"
+    # Generate output filename
+    if input_filename is None:
+        filename = os.path.join(results_dir, "cluster_properties.txt")
+    else:
+        base_name = os.path.splitext(os.path.basename(input_filename))[0]
         
-    filename = os.path.join(results_dir, f"cluster_properties_{base_name}{param_str}.txt")
+        # Include parameters in filename
+        param_parts = []
+        if std_scale is not None:
+            param_parts.append(f"s{std_scale}")
+        if min_pts is not None:
+            param_parts.append(f"m{min_pts}")
+        if eps is not None:
+            param_parts.append(f"e{eps}")
+        
+        if param_parts:
+            param_str = "_" + "_".join(param_parts)
+        else:
+            param_str = ""
+            
+        filename = os.path.join(results_dir, f"cluster_properties_{base_name}{param_str}.txt")
 
     with open(filename, 'w') as f:
         # Write header with parameters
@@ -650,6 +717,8 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
             f.write(f"# std_scale: {std_scale}\n")
         if min_pts is not None:
             f.write(f"# min_pts: {min_pts}\n")
+        if eps is not None:
+            f.write(f"# eps: {eps}\n")
         f.write("# cluster_id num_points center_x center_y gyration_radius lambda1 lambda2 relation_between_lambdas\n")
         
         for i in range(cluster_count):
@@ -664,7 +733,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
                 
                 f.write(f"{i} {size} {center_x:.6f} {center_y:.6f} {radius:.6f} {lambda1:.6f} {lambda2:.6f} {relation:.6f}\n")
     
-    print(f"gpu_dbscan: Cluster properties saved to {filename}")
+    print(f"cpu_dbscan: Cluster properties saved to {filename}")
 
 
 # ---------------------------
@@ -714,24 +783,24 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     
     # Histogram 1: Cluster sizes
     axes[0].hist(sizes, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
-    axes[0].set_xlabel('Tamaño del Cluster (número de puntos)')
-    axes[0].set_ylabel('Frecuencia')
-    axes[0].set_title('Distribución de Tamaños de Clusters')
+    axes[0].set_xlabel('Cluster Size (Number of Points)')
+    axes[0].set_ylabel('Frequency')
+    axes[0].set_title('Cluster Size Distribution')
     axes[0].grid(True, alpha=0.3)
     # Add statistics
-    axes[0].axvline(np.mean(sizes), color='red', linestyle='--', label=f'Media: {np.mean(sizes):.1f}')
-    axes[0].axvline(np.median(sizes), color='green', linestyle='--', label=f'Mediana: {np.median(sizes):.1f}')
+    axes[0].axvline(np.mean(sizes), color='red', linestyle='--', label=f'Mean: {np.mean(sizes):.1f}')
+    axes[0].axvline(np.median(sizes), color='green', linestyle='--', label=f'Median: {np.median(sizes):.1f}')
     axes[0].legend()
     
     # Histogram 2: Gyration radii
     axes[1].hist(radii, bins=20, alpha=0.7, color='lightgreen', edgecolor='black')
-    axes[1].set_xlabel('Radio de Giro')
-    axes[1].set_ylabel('Frecuencia')
-    axes[1].set_title('Distribución de Radios de Giro')
+    axes[1].set_xlabel('Gyration Radius')
+    axes[1].set_ylabel('Frequency')
+    axes[1].set_title('Gyration Radius Distribution')
     axes[1].grid(True, alpha=0.3)
     # Add statistics
-    axes[1].axvline(np.mean(radii), color='red', linestyle='--', label=f'Media: {np.mean(radii):.2f}')
-    axes[1].axvline(np.median(radii), color='green', linestyle='--', label=f'Mediana: {np.median(radii):.2f}')
+    axes[1].axvline(np.mean(radii), color='red', linestyle='--', label=f'Mean: {np.mean(radii):.2f}')
+    axes[1].axvline(np.median(radii), color='green', linestyle='--', label=f'Median: {np.median(radii):.2f}')
     axes[1].legend()
     
     # Histogram 3: Eigenvalue relations (shape anisotropy)
@@ -740,22 +809,22 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     valid_relations = valid_relations[valid_relations < np.percentile(valid_relations, 95)]  # Remove outliers
     
     axes[2].hist(valid_relations, bins=20, alpha=0.7, color='salmon', edgecolor='black')
-    axes[2].set_xlabel(r'Relación $\lambda_{\max} / \lambda_{\min}$')
-    axes[2].set_ylabel('Frecuencia')
-    axes[2].set_title('Distribución Relacion de Autovalores del Tensor de Inercia')
+    axes[2].set_xlabel(r'Relationship $\lambda_{\max} / \lambda_{\min}$')
+    axes[2].set_ylabel('Frequency')
+    axes[2].set_title('Inertia Tensor Eigenvalue Relationship Distribution')
     axes[2].grid(True, alpha=0.3)
     # Add statistics and interpretation
     mean_rel = np.mean(valid_relations)
-    axes[2].axvline(mean_rel, color='red', linestyle='--', label=f'Media: {mean_rel:.2f}')
-    axes[2].axvline(1.0, color='blue', linestyle='-', alpha=0.5, label='Perfectamente circular')
+    axes[2].axvline(mean_rel, color='red', linestyle='--', label=f'Mean: {mean_rel:.2f}')
+    axes[2].axvline(1.0, color='blue', linestyle='-', alpha=0.5, label='Perfectly Circular')
     
     # Add shape interpretation
     if mean_rel < 1.5:
-        shape_text = "Formas mayormente circulares"
+        shape_text = "Mostly Circular Shapes"
     elif mean_rel < 3.0:
-        shape_text = "Mezcla de formas"
+        shape_text = "Mixed Shapes"
     else:
-        shape_text = "Formas mayormente alargadas"
+        shape_text = "Mostly Elongated Shapes"
     
     axes[2].text(0.05, 0.95, shape_text, transform=axes[2].transAxes, 
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
@@ -961,23 +1030,24 @@ def plot_clusters(points, labels, cluster_count, input_filename):
 # Main script
 # ---------------------------
 if __name__ == "__main__":
+    print("===========================================")
     print("cpu_dbscan: Starting CPU DBSCAN clustering")
     
     print("=== Points Analysis ===")
     # Start timing
     time_start = time.perf_counter()
-    points, std_scale, min_pts, is_image, image_data = load_data()
+    points, std_scale, min_pts, eps_user, is_image, image_data, input_filename = load_data()
     print(f"cpu_dbscan: Number of points extracted: {len(points)}")
     time_points_extracted = time.perf_counter()
     print("cpu_dbscan: time points extracted = ", time_points_extracted - time_start)
 
     print("=== Epsilon Calculation ===")
-    epsilon = get_epsilon(points, min_pts,std_scale=std_scale)
+    epsilon = get_epsilon(points, min_pts, std_scale=std_scale, user_eps=eps_user)
     time_epsilon = time.perf_counter()
     print("cpu_dbscan: Time epsilon obtained = ", time_epsilon - time_points_extracted)
 
     print("=== DBSCAN Clustering ===")
-    labels,cluster_count = dbscan(points,epsilon,time_epsilon,min_pts)
+    labels, cluster_count = dbscan(points, epsilon, time_epsilon, min_pts)
     print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
     timeDBSCAN = time.perf_counter()
     print("cpu_dbscan: Time DBSCAN and graph construction = ", timeDBSCAN - time_epsilon)
@@ -992,9 +1062,14 @@ if __name__ == "__main__":
     print("cpu_dbscan: Total time = ", time_end - time_start)
     
     print("cpu_dbscan: Finished clustering and property computation. Saving results...")
-    input_filename = sys.argv[1]  # Get the input filename from command line
-    save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, cluster_eigenvalues_relation, cluster_sizes, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
-    create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_relation, input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
+    # Use the eps_user for saving properties (if provided)
+    eps_for_save = eps_user if eps_user is not None else epsilon
+    save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, 
+                           cluster_eigenvalues_relation, cluster_sizes, 
+                           input_filename=input_filename, std_scale=std_scale, 
+                           min_pts=min_pts, eps=eps_for_save)
+    create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_relation, 
+                             input_filename=input_filename, std_scale=std_scale, min_pts=min_pts)
     if is_image:
         # For images: paint clusters on the original image
         image_bw, color_marker = image_data
@@ -1004,5 +1079,6 @@ if __name__ == "__main__":
     else:
         # For NetCDF data: create a scatter plot
         plot_clusters(points, labels, cluster_count, input_filename)
-    print("gpu_dbscan: All results saved successfully.")
-    print("gpu_dbscan: End of program.")
+    print("cpu_dbscan: All results saved successfully.")
+    print("cpu_dbscan: End of program.")
+    print("===========================================")
