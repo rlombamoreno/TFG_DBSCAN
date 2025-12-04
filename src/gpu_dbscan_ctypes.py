@@ -17,7 +17,7 @@ Usage:
     python3 gpu_dbscan_ctypes.py <input_file> [OPTIONS]
 
     Arguments:
-    <input_file>         : Path to an image (.jpg, .jpeg, .png) or a NetCDF (.nc) file.
+    <input_file>         : Path to an image (.jpg, .jpeg, .png, .tif, .tiff) or a NetCDF (.nc) file.
                            This argument is REQUIRED.
 
     Options:
@@ -188,7 +188,7 @@ def calculate_min_pts():
 
 def load_data():
     """
-    Load points from an image (.jpg/.png) or NetCDF (.nc) file.
+    Load points from an image (.jpg/.png/.tif/.tiff) or NetCDF (.nc) file.
 
     Returns:
         tuple: (points: cp.ndarray of shape (N*2,), std_scale: float or None, 
@@ -200,7 +200,7 @@ def load_data():
     is_image = False
     image_data = None
     
-    if ext in [".jpg", ".jpeg", ".png"]:
+    if ext in [".jpg", ".jpeg", ".png", ".tif", ".tiff"]:
         points, image_bw, color_marker = load_image(input_filename)
         is_image = True
         image_data = (image_bw, color_marker)
@@ -1293,8 +1293,3 @@ if __name__ == "__main__":
     print("gpu_dbscan_ctypes: All results saved successfully.")
     print("gpu_dbscan_ctypes: End of program.")
     print("===========================================")
-    
-    
-    
-
-

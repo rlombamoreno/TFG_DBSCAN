@@ -17,7 +17,7 @@ Usage:
     python3 cpu_dbscan.py <input_file> [OPTIONS]
 
     Arguments:
-    <input_file>         : Path to an image (.jpg, .jpeg, .png) or a NetCDF (.nc) file.
+    <input_file>         : Path to an image (.jpg, .jpeg, .png, .tif, .tiff) or a NetCDF (.nc) file.
                            This argument is REQUIRED.
 
     Options:
@@ -34,7 +34,7 @@ Usage:
     python3 cpu_dbscan.py imagen.jpg --std_scale 0.8 --min_pts 5
     python3 cpu_dbscan.py imagen.jpg --eps 2.5
     python3 cpu_dbscan.py datos.nc --min_pts 15
-    python3 cpu_dbscan.py imagen.jpg --std_scale 0.7 --min_pts 8 --eps 3.0
+    python3 cpu_dbscan.py imagen.jpg --std_scale 0.7 --min_pts 8
 
 Dependencies:
     - numpy
@@ -153,7 +153,7 @@ def calculate_min_pts():
 
 def load_data():
     """
-    Load points from an image (.jpg/.png) or NetCDF (.nc) file.
+    Load points from an image (.jpg/.png/.tif/.tiff) or NetCDF (.nc) file.
 
     Returns:
         tuple: (points: np.ndarray, std_scale: float, min_pts: int, eps: float or None, 
@@ -165,7 +165,7 @@ def load_data():
     is_image = False
     image_data = None
     
-    if ext in [".jpg", ".jpeg", ".png"]:
+    if ext in [".jpg", ".jpeg", ".png", ".tif", ".tiff"]:
         points, image_bw, color_marker = load_image(input_filename)
         is_image = True
         image_data = (image_bw, color_marker)
@@ -173,7 +173,7 @@ def load_data():
         points = load_netcdf(input_filename)
     else:
         print(f"cpu_dbscan: Unsupported file extension: {ext}")
-        print("Supported: .jpg, .jpeg, .png, .nc")
+        print("Supported: .jpg, .jpeg, .png, .tif, .tiff, .nc")
         sys.exit(1)
     
     # Calculate min_pts if not provided
