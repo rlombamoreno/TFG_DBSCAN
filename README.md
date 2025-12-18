@@ -28,15 +28,19 @@ project/ <br>
 └── Makefile                # Build system
 
 ## Installation
-git clone https://github.com/yourusername/gpu-dbscan.git <br>
+```bash
+git clone https://github.com/yourusername/gpu-dbscan.git 
 cd gpu-dbscan
+```
 
 # Install dependencies
+```bash
 pip install numpy matplotlib pillow netcdf4 numba cupy-cuda11x
-
+```
 # Compile CUDA library
+```bash
 make
-
+```
 ## Command Line Options
 --std_scale VALUE   : Epsilon scaling factor (0-1, default: 1.0) <br>
 --min_pts VALUE     : Minimum points per cluster (default: auto) <br>
