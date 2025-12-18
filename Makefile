@@ -8,8 +8,8 @@ NVCC_FLAGS = -shared -Xcompiler -fPIC -O3
 CUDA_ARCH = -arch=sm_70  # Adjust based on your GPU architecture
 
 # Target library
-TARGET = libdbscan.so
-SOURCE = dbscan.cu
+TARGET = src/libdbscan.so
+SOURCE = src/dbscan.cu
 
 # Default target
 all: $(TARGET)
