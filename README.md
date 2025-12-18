@@ -1,9 +1,9 @@
 # GPU-Accelerated DBSCAN
 
-Developer: Rodrigo Lomba Moreno
-Institution: Universidad Politécnica de Madrid
-Date: November 2025
-Version: 1.0
+Developer: Rodrigo Lomba Moreno <br>
+Institution: Universidad Politécnica de Madrid <br>
+Date: November 2025 <br>
+Version: 1.0 <br>
 
 ## Description
 DBSCAN clustering algorithm for image segmentation and point cloud analysis with CPU and GPU implementations. Supports images (JPEG, PNG, TIFF) and NetCDF files.
@@ -17,18 +17,18 @@ DBSCAN clustering algorithm for image segmentation and point cloud analysis with
 - Visualization and histogram generation
 
 ## Requirements
-CPU: Python 3.7+, NumPy, Matplotlib, Pillow, netCDF4, Numba
+CPU: Python 3.7+, NumPy, Matplotlib, Pillow, netCDF4, Numba <br>
 GPU: CuPy, NVIDIA CUDA Toolkit, NVIDIA GPU (compute capability 3.0+)
 
 ## Project Structure
-project/
-├── src/                    # Source code
-├── pictures/               # Test images
-├── results/                # Output (CPU/GPU folders)
+project/ <br>
+├── src/                    # Source code <br>
+├── pictures/               # Test images <br>
+├── results/                # Output (CPU/GPU folders) <br>
 └── Makefile                # Build system
 
 ## Installation
-git clone https://github.com/yourusername/gpu-dbscan.git
+git clone https://github.com/yourusername/gpu-dbscan.git <br>
 cd gpu-dbscan
 
 # Install dependencies
@@ -38,40 +38,20 @@ pip install numpy matplotlib pillow netcdf4 numba cupy-cuda11x
 make
 
 ## Command Line Options
---std_scale VALUE   : Epsilon scaling factor (0-1, default: 1.0)
---min_pts VALUE     : Minimum points per cluster (default: auto)
---eps VALUE         : Direct epsilon value (skips auto-calculation)
+--std_scale VALUE   : Epsilon scaling factor (0-1, default: 1.0) <br>
+--min_pts VALUE     : Minimum points per cluster (default: auto) <br>
+--eps VALUE         : Direct epsilon value (skips auto-calculation) <br>
 
 ## Output Files (in results/ folder)
-*_clusters_*.png          : Colored cluster visualization
-cluster_properties_*.txt  : Cluster statistics
-histograms_*.png          : Distribution plots
-histogram_data_*.txt      : Statistical summary
+*_clusters_*.png          : Colored cluster visualization <br>
+cluster_properties_*.txt  : Cluster statistics <br>
+histograms_*.png          : Distribution plots <br>
+histogram_data_*.txt      : Statistical summary <br>
 
-## Performance
-CPU: Best for small images (<1 MP) or when no GPU is available
-GPU: 5–50x faster for large images (>1 MP)
-Requirements: NVIDIA GPU with CUDA support
 
 ## Makefile Commands
-make        # Compile CUDA library
-make clean  # Remove compiled files
-make info   # Show GPU compute capability
-make debug  # Compile with debug symbols
-make help   # Show help message
-
-## Troubleshooting
-CUDA library not found:
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)
-
-Memory errors:
-Use CPU version for very large images
-
-Slow CPU:
-Ensure Numba is installed
-
-## License
-MIT License
-
-## Contact
-For issues or questions: rlomba@example.com
+make        # Compile CUDA library <br>
+make clean  # Remove compiled files <br>
+make info   # Show GPU compute capability <br>
+make debug  # Compile with debug symbols <br>
+make help   # Show help message <br>
