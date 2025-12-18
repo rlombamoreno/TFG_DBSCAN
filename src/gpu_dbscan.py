@@ -44,7 +44,6 @@ Dependencies:
     - pillow
     - matplotlib
     - netCDF4
-    - ctypes
     - time, os, sys
 """
 
@@ -54,7 +53,6 @@ import cupy as cp
 import matplotlib.pyplot as plt
 import netCDF4 as nc
 from PIL import Image
-from numba import jit
 import time
 import os
 
@@ -1230,7 +1228,6 @@ if __name__ == "__main__":
     props = cp.cuda.runtime.getDeviceProperties(current_device)
     gpu_name = props['name'].decode()
     print(f"Current device: {current_device} - {gpu_name}")
-
     print("=== Points Analysis ===")
     # Start timing
     start = time.perf_counter()

@@ -57,7 +57,6 @@ import os
 # ---------------------------
 # Global constants
 # ---------------------------
-MIN_POINTS = 5
 INF = 1e20
 
 
