@@ -880,7 +880,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     
     # Generate output filename
     if input_filename is None:
-        filename = os.path.join(output_dir, "cluster_properties.txt")
+        filename = os.path.join(output_dir, "cluster_properties_GPU.txt")
     else:
         base_name = os.path.splitext(os.path.basename(input_filename))[0]
         
@@ -898,7 +898,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
         else:
             param_str = ""
             
-        filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
+        filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}_GPU.txt")
     
     with open(filename, 'w') as f:
         # Write header with parameters
@@ -1022,14 +1022,14 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     
     # Adjust layout and save
     plt.tight_layout()
-    histogram_filename = os.path.join(output_dir, f"histograms_{base_name}{param_str}.png")
+    histogram_filename = os.path.join(output_dir, f"histograms_{base_name}{param_str}_GPU.png")
     plt.savefig(histogram_filename, dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"gpu_dbscan: Histograms saved to {histogram_filename}")
     
     # Also save histogram data as text file
-    data_filename = os.path.join(output_dir, f"histogram_data_{base_name}{param_str}.txt")
+    data_filename = os.path.join(output_dir, f"histogram_data_{base_name}{param_str}_GPU.txt")
     with open(data_filename, 'w') as f:
         f.write("# Cluster Size Statistics\n")
         f.write(f"# Total clusters: {len(sizes)}\n")
@@ -1204,7 +1204,6 @@ def plot_clusters(points, labels, cluster_count, input_filename):
     plt.xlabel('X coordinate')
     plt.ylabel('Y coordinate')
     plt.title(f'DBSCAN Clustering - {cluster_count} clusters found')
-    plt.legend()
     plt.grid(True, alpha=0.3)
     
     # Save the plot

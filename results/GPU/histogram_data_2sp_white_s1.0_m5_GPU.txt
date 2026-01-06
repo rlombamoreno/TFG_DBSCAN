@@ -1,0 +1,20 @@
+# Cluster Size Statistics
+# Total clusters: 4565
+# Mean size: 38.61
+# Median size: 9.00
+# Std size: 237.96
+# Min size: 3
+# Max size: 2937
+
+# Gyration Radius Statistics
+# Mean radius: 1.7426
+# Median radius: 1.2669
+# Std radius: 2.2012
+# Min radius: 0.6667
+# Max radius: 22.8947
+
+# Shape Anisotropy Statistics
+# Mean relation: 2.1481
+# Median relation: 1.8750
+# Std relation: 1.0926
+# Interpretation: Mixed shapes

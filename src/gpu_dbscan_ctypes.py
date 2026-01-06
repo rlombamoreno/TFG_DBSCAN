@@ -323,7 +323,7 @@ def save_image(image_colored):
     """
     image_filename = sys.argv[1]
     name, ext = os.path.splitext(image_filename)
-    output_filename = f"{name}_clusters_GPU.png"
+    output_filename = f"{name}_clusters_GPU_ctypes.png"
     plt.imsave(output_filename, image_colored)
     print(f"gpu_dbscan_ctypes: Clustered image saved as: {output_filename}")
 
@@ -890,7 +890,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
     
     # Generate output filename
     if input_filename is None:
-        filename = os.path.join(output_dir, "cluster_properties.txt")
+        filename = os.path.join(output_dir, "cluster_properties_GPU_ctypes.txt")
     else:
         base_name = os.path.splitext(os.path.basename(input_filename))[0]
         
@@ -908,7 +908,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
         else:
             param_str = ""
             
-        filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}.txt")
+        filename = os.path.join(output_dir, f"cluster_properties_{base_name}{param_str}_GPU_ctypes.txt")
     
     with open(filename, 'w') as f:
         # Write header with parameters
@@ -1032,14 +1032,14 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     
     # Adjust layout and save
     plt.tight_layout()
-    histogram_filename = os.path.join(output_dir, f"histograms_{base_name}{param_str}.png")
+    histogram_filename = os.path.join(output_dir, f"histograms_{base_name}{param_str}_GPU_ctypes.png")
     plt.savefig(histogram_filename, dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"gpu_dbscan_ctypes: Histograms saved to {histogram_filename}")
     
     # Also save histogram data as text file
-    data_filename = os.path.join(output_dir, f"histogram_data_{base_name}{param_str}.txt")
+    data_filename = os.path.join(output_dir, f"histogram_data_{base_name}{param_str}_GPU_ctypes.txt")
     with open(data_filename, 'w') as f:
         f.write("# Cluster Size Statistics\n")
         f.write(f"# Total clusters: {len(sizes)}\n")
@@ -1143,7 +1143,7 @@ def save_clustered_image(image, points, labels, cluster_count, color_marker, inp
         color_marker (int): Background color marker
         input_filename (str): Original input filename
     """
-    # Create results/CPU directory if it doesn't exist
+    # Create results/GPU directory if it doesn't exist
     script_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(script_dir)
     results_dir = os.path.join(parent_dir, "results", "GPU")
@@ -1151,7 +1151,7 @@ def save_clustered_image(image, points, labels, cluster_count, color_marker, inp
     
     # Generate output filename
     base_name = os.path.splitext(os.path.basename(input_filename))[0]
-    output_filename = f"{results_dir}/{base_name}_clusters_GPU.png"
+    output_filename = f"{results_dir}/{base_name}_clusters_GPU_ctypes.png"
     
     # Paint the clusters
     image_colored = paint_clusters(image, points, labels, cluster_count, color_marker)
@@ -1181,7 +1181,7 @@ def plot_clusters(points, labels, cluster_count, input_filename):
     
     # Generate output filename
     base_name = os.path.splitext(os.path.basename(input_filename))[0]
-    output_filename = f"{results_dir}/{base_name}_clusters_GPU.png"
+    output_filename = f"{results_dir}/{base_name}_clusters_GPU_ctypes.png"
     
     # Create figure
     plt.figure(figsize=(10, 8))
@@ -1215,7 +1215,6 @@ def plot_clusters(points, labels, cluster_count, input_filename):
     plt.xlabel('X coordinate')
     plt.ylabel('Y coordinate')
     plt.title(f'DBSCAN Clustering - {cluster_count} clusters found')
-    plt.legend()
     plt.grid(True, alpha=0.3)
     
     # Save the plot

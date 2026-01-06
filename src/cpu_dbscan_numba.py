@@ -1,5 +1,5 @@
 """
-cpu_dbscan.py
+cpu_dbscan_numba.py
 -------------
 CPU implementation of the DBSCAN algorithm optimized with NumPy.
 
@@ -14,7 +14,7 @@ vectorized NumPy operations and an adaptive epsilon calculation method.
 It supports input from common image files (JPEG/PNG) and NetCDF files.
 
 Usage:
-    python3 cpu_dbscan.py <input_file> [OPTIONS]
+    python3 cpu_dbscan_numba.py <input_file> [OPTIONS]
 
     Arguments:
     <input_file>         : Path to an image (.jpg, .jpeg, .png, .tif, .tiff) or a NetCDF (.nc) file.
@@ -29,18 +29,19 @@ Usage:
                            If provided, skips automatic epsilon calculation.
 
     Examples:
-    python3 cpu_dbscan.py imagen.jpg
-    python3 cpu_dbscan.py imagen.jpg --min_pts 10
-    python3 cpu_dbscan.py imagen.jpg --std_scale 0.8 --min_pts 5
-    python3 cpu_dbscan.py imagen.jpg --eps 2.5
-    python3 cpu_dbscan.py datos.nc --min_pts 15
-    python3 cpu_dbscan.py imagen.jpg --std_scale 0.7 --min_pts 8
+    python3 cpu_dbscan_numba.py imagen.jpg
+    python3 cpu_dbscan_numba.py imagen.jpg --min_pts 10
+    python3 cpu_dbscan_numba.py imagen.jpg --std_scale 0.8 --min_pts 5
+    python3 cpu_dbscan_numba.py imagen.jpg --eps 2.5
+    python3 cpu_dbscan_numba.py datos.nc --min_pts 15
+    python3 cpu_dbscan_numba.py imagen.jpg --std_scale 0.7 --min_pts 8
 
 Dependencies:
     - numpy
     - pillow (PIL)
     - matplotlib
     - netCDF4
+    - numba
     - time, os, sys
 """
 
@@ -48,6 +49,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
+from numba import jit
 import netCDF4 as nc
 import time
 import os
@@ -83,11 +85,11 @@ def load_parameters():
             try:
                 std_scale = float(sys.argv[i + 1])
                 if std_scale < 0 or std_scale > 1:
-                    print("cpu_dbscan: std_scale must be between 0 and 1")
+                    print("cpu_dbscan_numba: std_scale must be between 0 and 1")
                     sys.exit(1)
-                print(f"cpu_dbscan: Using user-provided std_scale: {std_scale}")
+                print(f"cpu_dbscan_numba: Using user-provided std_scale: {std_scale}")
             except ValueError:
-                print("cpu_dbscan: std_scale must be a float between 0 and 1")
+                print("cpu_dbscan_numba: std_scale must be a float between 0 and 1")
                 sys.exit(1)
             i += 2
             
@@ -95,11 +97,11 @@ def load_parameters():
             try:
                 min_pts = int(sys.argv[i + 1])
                 if min_pts < 1:
-                    print("cpu_dbscan: min_pts must be a positive integer")
+                    print("cpu_dbscan_numba: min_pts must be a positive integer")
                     sys.exit(1)
-                print(f"cpu_dbscan: Using user-provided min_pts: {min_pts}")
+                print(f"cpu_dbscan_numba: Using user-provided min_pts: {min_pts}")
             except ValueError:
-                print("cpu_dbscan: min_pts must be a positive integer")
+                print("cpu_dbscan_numba: min_pts must be a positive integer")
                 sys.exit(1)
             i += 2
             
@@ -107,16 +109,16 @@ def load_parameters():
             try:
                 eps = float(sys.argv[i + 1])
                 if eps <= 0:
-                    print("cpu_dbscan: eps must be a positive float")
+                    print("cpu_dbscan_numba: eps must be a positive float")
                     sys.exit(1)
-                print(f"cpu_dbscan: Using user-provided eps: {eps}")
+                print(f"cpu_dbscan_numba: Using user-provided eps: {eps}")
             except ValueError:
-                print("cpu_dbscan: eps must be a positive float")
+                print("cpu_dbscan_numba: eps must be a positive float")
                 sys.exit(1)
             i += 2
             
         elif arg.startswith("--"):
-            print(f"cpu_dbscan: Warning: Unknown argument {arg}")
+            print(f"cpu_dbscan_numba: Warning: Unknown argument {arg}")
             i += 1
         else:
             # Assume this is the input file (required)
@@ -125,11 +127,11 @@ def load_parameters():
     
     # Validate that we have an input file
     if input_filename is None:
-        print("cpu_dbscan: Error: Must specify an input file (image or netCDF)")
-        print("Usage: python3 cpu_dbscan.py <input_file> [--std_scale VALUE] [--min_pts VALUE] [--eps VALUE]")
-        print("Example: python3 cpu_dbscan.py imagen.jpg --min_pts 10")
-        print("Example: python3 cpu_dbscan.py imagen.jpg --std_scale 0.8 --min_pts 5")
-        print("Example: python3 cpu_dbscan.py datos.nc --eps 2.5")
+        print("cpu_dbscan_numba: Error: Must specify an input file (image or netCDF)")
+        print("Usage: python3 cpu_dbscan_numba.py <input_file> [--std_scale VALUE] [--min_pts VALUE] [--eps VALUE]")
+        print("Example: python3 cpu_dbscan_numba.py imagen.jpg --min_pts 10")
+        print("Example: python3 cpu_dbscan_numba.py imagen.jpg --std_scale 0.8 --min_pts 5")
+        print("Example: python3 cpu_dbscan_numba.py datos.nc --eps 2.5")
         sys.exit(1)
     
     return input_filename, std_scale, min_pts, eps
@@ -144,7 +146,7 @@ def calculate_min_pts():
     # For image analysis, dimension is always 2 (x, y coordinates)
     dimension = 2
     calculated_min_pts = 2 * dimension + 1
-    print(f"cpu_dbscan: Calculated min_pts as 2 * dimension + 1 => 2 * {dimension} + 1 = {calculated_min_pts}")
+    print(f"cpu_dbscan_numba: Calculated min_pts as 2 * dimension + 1 => 2 * {dimension} + 1 = {calculated_min_pts}")
     return calculated_min_pts
 
 
@@ -169,23 +171,23 @@ def load_data():
     elif ext == ".nc":
         points = load_netcdf(input_filename)
     else:
-        print(f"cpu_dbscan: Unsupported file extension: {ext}")
+        print(f"cpu_dbscan_numba: Unsupported file extension: {ext}")
         print("Supported: .jpg, .jpeg, .png, .tif, .tiff, .nc")
         sys.exit(1)
     
     # Calculate min_pts if not provided
     if user_min_pts is not None:
         min_pts = user_min_pts
-        print(f"cpu_dbscan: Using user-provided min_pts: {min_pts}")
+        print(f"cpu_dbscan_numba: Using user-provided min_pts: {min_pts}")
     else:
         min_pts = calculate_min_pts()
-        print(f"cpu_dbscan: Using calculated min_pts: {min_pts}")
+        print(f"cpu_dbscan_numba: Using calculated min_pts: {min_pts}")
     
     # If std_scale not provided, use default value
     if std_scale is None:
         std_scale = 1.0
-        print("cpu_dbscan: Using default std_scale: 1.0")
-    
+        print("cpu_dbscan_numba: Using default std_scale: 1.0")
+
     return points, std_scale, min_pts, eps, is_image, image_data, input_filename
 
 
@@ -202,7 +204,7 @@ def load_image(image_filename):
     """
     
     image_orig = Image.open(image_filename)
-    print(f"cpu_dbscan: Image name: {image_filename} Size: {image_orig.size}")
+    print(f"cpu_dbscan_numba: Image name: {image_filename} Size: {image_orig.size}")
     
     # Convert to grayscale
     image_gray = image_orig.convert('L')
@@ -260,6 +262,7 @@ def load_netcdf(netcdf_filename):
     return points
 
 
+@jit(nopython=True)
 def points_to_array(r):
     """
     Convert a 2xN coordinate array to Nx2 float32 array.
@@ -325,6 +328,7 @@ def get_points_in_cluster(image, color_marker):
 # ---------------------------
 # DBSCAN algorithm functions
 # ---------------------------
+@jit(nopython=True)
 def compute_kn_distances(points, k):
     """
     Compute the k-nearest distances for each point.
@@ -372,17 +376,18 @@ def get_epsilon(points, k, std_scale, user_eps=None):
         float: Recommended epsilon
     """
     if user_eps is not None:
-        print(f"cpu_dbscan: Using user-provided epsilon: {user_eps}")
+        print(f"cpu_dbscan_numba: Using user-provided epsilon: {user_eps}")
         return user_eps
     
     # Automatic epsilon calculation
-    print("cpu_dbscan: Calculating epsilon automatically...")
+    print("cpu_dbscan_numba: Calculating epsilon automatically...")
     kn_distances = compute_kn_distances(points, k)
     epsilon = np.mean(kn_distances) + np.std(kn_distances) * std_scale
-    print(f"cpu_dbscan: Recommended epsilon: {epsilon}")
+    print(f"cpu_dbscan_numba: Recommended epsilon: {epsilon}")
     return epsilon
 
 
+@jit(nopython=True)
 def neighbor_count(points, epsilon, is_core_point, adjacency_info, min_pts):
     """
     Count neighbors within epsilon for each point and mark core points.
@@ -418,6 +423,7 @@ def neighbor_count(points, epsilon, is_core_point, adjacency_info, min_pts):
     return count_total_neighbors
 
 
+@jit(nopython=True)
 def build_adjacency_info(points, epsilon, adjacency_info, min_pts):
     """
     Build adjacency information for DBSCAN (core points and neighbor list).
@@ -454,6 +460,7 @@ def build_adjacency_info(points, epsilon, adjacency_info, min_pts):
     return is_core_point, adjacent_list
 
 
+@jit(nopython=True)
 def dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, adjacency_info):
     """
     Main DBSCAN algorithm: expand clusters starting from core points.
@@ -517,10 +524,10 @@ def dbscan(points, epsilon, time_epsilon, min_pts):
     adjacency_info = np.zeros((len(points), 2), dtype=np.int32)
     is_core_point, adjacent_list = build_adjacency_info(points, epsilon, adjacency_info, min_pts)
     time_adjacency_info = time.perf_counter()
-    print("cpu_dbscan: Time graph construction = ", time_adjacency_info - time_epsilon)
+    print("cpu_dbscan_numba: Time graph construction = ", time_adjacency_info - time_epsilon)
     labels = np.zeros(len(points), dtype=np.int32) - 1
     cluster_count = dbscan_core(points, epsilon, min_pts, labels, is_core_point, adjacent_list, adjacency_info)
-    print("cpu_dbscan: Time DBSCAN = ", time.perf_counter() - time_adjacency_info)
+    print("cpu_dbscan_numba: Time DBSCAN = ", time.perf_counter() - time_adjacency_info)
     return labels, cluster_count
 
 
@@ -552,7 +559,7 @@ def compute_cluster_properties(points, labels, cluster_count):
     valid_labels = labels[valid_mask]
     
     if len(valid_labels) == 0:
-        print("cpu_dbscan: No clusters found for property computation.")
+        print("cpu_dbscan_numba: No clusters found for property computation.")
         return (np.empty(0, dtype=np.float32), np.empty(0, dtype=np.float32), 
                 np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int32),
                 np.empty(0, dtype=np.float32))
@@ -696,7 +703,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
         else:
             param_str = ""
             
-        filename = os.path.join(results_dir, f"cluster_properties_{base_name}{param_str}_CPU.txt")
+        filename = os.path.join(results_dir, f"cluster_properties_{base_name}{param_str}_CPU_numba.txt")
 
     with open(filename, 'w') as f:
         # Write header with parameters
@@ -722,7 +729,7 @@ def save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues,
                 
                 f.write(f"{i} {size} {center_x:.6f} {center_y:.6f} {radius:.6f} {lambda1:.6f} {lambda2:.6f} {relation:.6f}\n")
     
-    print(f"cpu_dbscan: Cluster properties saved to {filename}")
+    print(f"cpu_dbscan_numba: Cluster properties saved to {filename}")
 
 
 # ---------------------------
@@ -748,7 +755,7 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     relations = cluster_eigenvalues_relation[valid_mask]
     
     if len(sizes) == 0:
-        print("cpu_dbscan: No valid clusters for histogram creation.")
+        print("cpu_dbscan_numba: No valid clusters for histogram creation.")
         return
     
     # Create results/CPU directory if it doesn't exist
@@ -822,14 +829,14 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
     
     # Adjust layout and save
     plt.tight_layout()
-    histogram_filename = os.path.join(results_dir, f"histograms_{base_name}{param_str}_CPU.png")
+    histogram_filename = os.path.join(results_dir, f"histograms_{base_name}{param_str}_CPU_numba.png")
     plt.savefig(histogram_filename, dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"cpu_dbscan: Histograms saved to {histogram_filename}")
+    print(f"cpu_dbscan_numba: Histograms saved to {histogram_filename}")
     
     # Also save histogram data as text file
-    data_filename = os.path.join(results_dir, f"histogram_data_{base_name}{param_str}_CPU.txt")
+    data_filename = os.path.join(results_dir, f"histogram_data_{base_name}{param_str}_CPU_numba.txt")
     with open(data_filename, 'w') as f:
         f.write("# Cluster Size Statistics\n")
         f.write(f"# Total clusters: {len(sizes)}\n")
@@ -852,7 +859,7 @@ def create_cluster_histograms(cluster_sizes, cluster_radii, cluster_eigenvalues_
         f.write(f"# Std relation: {np.std(valid_relations):.4f}\n")
         f.write(f"# Interpretation: {shape_text}\n")
     
-    print(f"cpu_dbscan: Histogram data saved to {data_filename}")
+    print(f"cpu_dbscan_numba: Histogram data saved to {data_filename}")
 
 
 # ---------------------------
@@ -941,14 +948,14 @@ def save_clustered_image(image, points, labels, cluster_count, color_marker, inp
     
     # Generate output filename
     base_name = os.path.splitext(os.path.basename(input_filename))[0]
-    output_filename = f"{results_dir}/{base_name}_clusters_CPU.png"
+    output_filename = f"{results_dir}/{base_name}_clusters_CPU_numba.png"
     
     # Paint the clusters
     image_colored = paint_clusters(image, points, labels, cluster_count, color_marker)
     
     # Save the image
     plt.imsave(output_filename, image_colored)
-    print(f"cpu_dbscan: Clustered image saved as: {output_filename}")
+    print(f"cpu_dbscan_numba: Clustered image saved as: {output_filename}")
     
     return image_colored
 
@@ -971,7 +978,7 @@ def plot_clusters(points, labels, cluster_count, input_filename):
     
     # Generate output filename
     base_name = os.path.splitext(os.path.basename(input_filename))[0]
-    output_filename = f"{results_dir}/{base_name}_clusters_CPU.png"
+    output_filename = f"{results_dir}/{base_name}_clusters_CPU_numba.png"
     
     # Create figure
     plt.figure(figsize=(10, 8))
@@ -1011,7 +1018,7 @@ def plot_clusters(points, labels, cluster_count, input_filename):
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"cpu_dbscan: Cluster plot saved as: {output_filename}")
+    print(f"cpu_dbscan_numba: Cluster plot saved as: {output_filename}")
 
 
 # ---------------------------
@@ -1019,37 +1026,37 @@ def plot_clusters(points, labels, cluster_count, input_filename):
 # ---------------------------
 if __name__ == "__main__":
     print("===========================================")
-    print("cpu_dbscan: Starting CPU DBSCAN clustering")
+    print("cpu_dbscan_numba: Starting CPU DBSCAN clustering")
     
     print("=== Points Analysis ===")
     # Start timing
     time_start = time.perf_counter()
     points, std_scale, min_pts, eps_user, is_image, image_data, input_filename = load_data()
-    print(f"cpu_dbscan: Number of points extracted: {len(points)}")
+    print(f"cpu_dbscan_numba: Number of points extracted: {len(points)}")
     time_points_extracted = time.perf_counter()
-    print("cpu_dbscan: time points extracted = ", time_points_extracted - time_start)
+    print("cpu_dbscan_numba: time points extracted = ", time_points_extracted - time_start)
 
     print("=== Epsilon Calculation ===")
     epsilon = get_epsilon(points, min_pts, std_scale=std_scale, user_eps=eps_user)
     time_epsilon = time.perf_counter()
-    print("cpu_dbscan: Time epsilon obtained = ", time_epsilon - time_points_extracted)
+    print("cpu_dbscan_numba: Time epsilon obtained = ", time_epsilon - time_points_extracted)
 
     print("=== DBSCAN Clustering ===")
     labels, cluster_count = dbscan(points, epsilon, time_epsilon, min_pts)
-    print(f"cpu_dbscan: Number of clusters found: {cluster_count}")
+    print(f"cpu_dbscan_numba: Number of clusters found: {cluster_count}")
     timeDBSCAN = time.perf_counter()
-    print("cpu_dbscan: Time DBSCAN and graph construction = ", timeDBSCAN - time_epsilon)
+    print("cpu_dbscan_numba: Time DBSCAN and graph construction = ", timeDBSCAN - time_epsilon)
     
     print("=== Cluster Properties Calculation ===")
     cluster_centers, cluster_radii, cluster_eigenvalues, cluster_sizes, cluster_eigenvalues_relation = compute_cluster_properties(points, labels, cluster_count)
     timeProperties = time.perf_counter()
-    print("cpu_dbscan: Time Properties = ", timeProperties - timeDBSCAN)
+    print("cpu_dbscan_numba: Time Properties = ", timeProperties - timeDBSCAN)
     
     # end timing
     time_end = time.perf_counter()
-    print("cpu_dbscan: Total time = ", time_end - time_start)
-    
-    print("cpu_dbscan: Finished clustering and property computation. Saving results...")
+    print("cpu_dbscan_numba: Total time = ", time_end - time_start)
+
+    print("cpu_dbscan_numba: Finished clustering and property computation. Saving results...")
     # Use the eps_user for saving properties (if provided)
     eps_for_save = eps_user if eps_user is not None else epsilon
     save_cluster_properties(cluster_centers, cluster_radii, cluster_eigenvalues, 
@@ -1067,6 +1074,6 @@ if __name__ == "__main__":
     else:
         # For NetCDF data: create a scatter plot
         plot_clusters(points, labels, cluster_count, input_filename)
-    print("cpu_dbscan: All results saved successfully.")
-    print("cpu_dbscan: End of program.")
+    print("cpu_dbscan_numba: All results saved successfully.")
+    print("cpu_dbscan_numba: End of program.")
     print("===========================================")

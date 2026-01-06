@@ -1,6 +1,0 @@
-pictures/*
-results/*
-__pycache__/
-*.pyc
-.DS_Store
-src/conversor_bw.py

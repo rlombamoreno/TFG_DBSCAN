@@ -1,0 +1,120 @@
+===========================================
+cpu_dbscan: Starting CPU DBSCAN clustering
+=== Points Analysis ===
+cpu_dbscan: Image name: /home/rlomba/cupy/pictures/2sp_white.jpg Size: (1036, 1143)
+cpu_dbscan: Calculated min_pts as 2 * dimension + 1 => 2 * 2 + 1 = 5
+cpu_dbscan: Using calculated min_pts: 5
+cpu_dbscan: Using default std_scale: 1.0
+cpu_dbscan: Number of points extracted: 176784
+cpu_dbscan: time points extracted =  0.2506965259090066
+=== Epsilon Calculation ===
+cpu_dbscan: Calculating epsilon automatically...
+cpu_dbscan: Recommended epsilon: 1.9317284234263357
+cpu_dbscan: Time epsilon obtained =  20878.544432245195
+=== DBSCAN Clustering ===
+cpu_dbscan: Time graph construction =  37479.91424474679
+cpu_dbscan: Time DBSCAN =  114.38878524443135
+cpu_dbscan: Number of clusters found: 4565
+cpu_dbscan: Time DBSCAN and graph construction =  37594.30304762721
+=== Cluster Properties Calculation ===
+cpu_dbscan: Time Properties =  0.5561479148454964
+cpu_dbscan: Total time =  58473.65432825405
+cpu_dbscan: Finished clustering and property computation. Saving results...
+cpu_dbscan: Cluster properties saved to /home/rlomba/cupy/results/CPU/cluster_properties_2sp_white_s1.0_m5_e1.9317284234263357_CPU.txt
+cpu_dbscan: Histograms saved to /home/rlomba/cupy/results/CPU/histograms_2sp_white_s1.0_m5_CPU.png
+cpu_dbscan: Histogram data saved to /home/rlomba/cupy/results/CPU/histogram_data_2sp_white_s1.0_m5_CPU.txt
+cpu_dbscan: Clustered image saved as: /home/rlomba/cupy/results/CPU/2sp_white_clusters_CPU.png
+cpu_dbscan: All results saved successfully.
+cpu_dbscan: End of program.
+===========================================
+===========================================
+cpu_dbscan_numba: Starting CPU DBSCAN clustering
+=== Points Analysis ===
+cpu_dbscan_numba: Image name: /home/rlomba/cupy/pictures/2sp_white.jpg Size: (1036, 1143)
+cpu_dbscan_numba: Calculated min_pts as 2 * dimension + 1 => 2 * 2 + 1 = 5
+cpu_dbscan_numba: Using calculated min_pts: 5
+cpu_dbscan_numba: Using default std_scale: 1.0
+cpu_dbscan_numba: Number of points extracted: 176784
+cpu_dbscan_numba: time points extracted =  0.2509677247144282
+=== Epsilon Calculation ===
+cpu_dbscan_numba: Calculating epsilon automatically...
+cpu_dbscan_numba: Recommended epsilon: 1.9317284234263357
+cpu_dbscan_numba: Time epsilon obtained =  34.031402989290655
+=== DBSCAN Clustering ===
+cpu_dbscan_numba: Time graph construction =  47.148076741956174
+cpu_dbscan_numba: Time DBSCAN =  0.9956666911020875
+cpu_dbscan_numba: Number of clusters found: 4565
+cpu_dbscan_numba: Time DBSCAN and graph construction =  48.14375313278288
+=== Cluster Properties Calculation ===
+cpu_dbscan_numba: Time Properties =  0.5878270179964602
+cpu_dbscan_numba: Total time =  83.01395478472114
+cpu_dbscan_numba: Finished clustering and property computation. Saving results...
+cpu_dbscan_numba: Cluster properties saved to /home/rlomba/cupy/results/CPU/cluster_properties_2sp_white_s1.0_m5_e1.9317284234263357_CPU_numba.txt
+cpu_dbscan_numba: Histograms saved to /home/rlomba/cupy/results/CPU/histograms_2sp_white_s1.0_m5_CPU_numba.png
+cpu_dbscan_numba: Histogram data saved to /home/rlomba/cupy/results/CPU/histogram_data_2sp_white_s1.0_m5_CPU_numba.txt
+cpu_dbscan_numba: Clustered image saved as: /home/rlomba/cupy/results/CPU/2sp_white_clusters_CPU_numba.png
+cpu_dbscan_numba: All results saved successfully.
+cpu_dbscan_numba: End of program.
+===========================================
+===========================================
+gpu_dbscan: Starting GPU DBSCAN clustering
+=== GPU Info ===
+Number of devices: 1
+Current device: 0 - NVIDIA H200 NVL
+=== Points Analysis ===
+gpu_dbscan: Image name: /home/rlomba/cupy/pictures/2sp_white.jpg Size: (1036, 1143)
+gpu_dbscan: Calculated min_pts as 2 * dimension + 1 => 2 * 2 + 1 = 5
+gpu_dbscan: Using calculated min_pts: 5
+gpu_dbscan: Using default std_scale: 1.0
+gpu_dbscan: Number of points to cluster: 176784
+gpu_dbscan: TimePoints =  0.2162661119364202
+=== Epsilon Calculation ===
+gpu_dbscan: Recommended epsilon: 1.9317283630371094
+gpu_dbscan: TimeEpsilon =  0.049362015910446644
+=== DBSCAN Clustering ===
+gpu_dbscan: TimeGraph =  0.05006123799830675
+gpu_dbscan: TimeDBSCAN =  3.274375544860959
+gpu_dbscan: Number of clusters found: 4565
+gpu_dbscan: Time DBSCAN and graph construction =  3.324460829142481
+=== Cluster Properties Calculation ===
+gpu_dbscan: Time Properties =  0.049721522722393274
+gpu_dbscan: Total Time =  3.639814897906035
+gpu_dbscan: Finished clustering and property computation. Saving results...
+gpu_dbscan: Cluster properties saved to results/GPU/cluster_properties_2sp_white_s1.0_m5_GPU.txt
+gpu_dbscan: Histograms saved to results/GPU/histograms_2sp_white_s1.0_m5_GPU.png
+gpu_dbscan: Histogram data saved to results/GPU/histogram_data_2sp_white_s1.0_m5_GPU.txt
+cpu_dbscan: Clustered image saved as: /home/rlomba/cupy/results/GPU/2sp_white_clusters_GPU.png
+gpu_dbscan: All results saved successfully.
+gpu_dbscan: End of program.
+===========================================
+===========================================
+gpu_dbscan_ctypes: Starting GPU DBSCAN clustering
+=== GPU Info ===
+gpu_dbscan_ctypes: Number of devices: 1
+gpu_dbscan_ctypes: Current device: 0 - NVIDIA H200 NVL
+=== Points Analysis ===
+gpu_dbscan_ctypes: Image name: /home/rlomba/cupy/pictures/2sp_white.jpg Size: (1036, 1143)
+gpu_dbscan_ctypes: Calculated min_pts as 2 * dimension + 1 => 2 * 2 + 1 = 5
+gpu_dbscan_ctypes: Using calculated min_pts: 5
+gpu_dbscan_ctypes: Using default std_scale: 1.0
+gpu_dbscan_ctypes: Number of points to cluster: 176784
+gpu_dbscan_ctypes: TimePoints =  0.19884288497269154
+=== Epsilon Calculation ===
+gpu_dbscan_ctypes: Recommended epsilon: 1.931728482246399
+gpu_dbscan_ctypes: TimeEpsilon =  0.044919957872480154
+=== DBSCAN Clustering ===
+gpu_dbscan_ctypes: TimeGraph =  0.047793771140277386
+gpu_dbscan_ctypes: TimeDBSCAN =  0.7369140959344804
+gpu_dbscan_ctypes: Number of clusters found: 4565
+gpu_dbscan_ctypes: Time DBSCAN and graph construction =  0.7847190350294113
+=== Cluster Properties Calculation ===
+gpu_dbscan_ctypes: Time Properties =  0.04506261786445975
+gpu_dbscan_ctypes: Total Time =  1.073549601715058
+gpu_dbscan_ctypes: Finished clustering and property computation. Saving results...
+gpu_dbscan_ctypes: Cluster properties saved to results/GPU/cluster_properties_2sp_white_s1.0_m5_GPU_ctypes.txt
+gpu_dbscan_ctypes: Histograms saved to results/GPU/histograms_2sp_white_s1.0_m5_GPU_ctypes.png
+gpu_dbscan_ctypes: Histogram data saved to results/GPU/histogram_data_2sp_white_s1.0_m5_GPU_ctypes.txt
+gpu_dbscan_ctypes: Clustered image saved as: /home/rlomba/cupy/results/GPU/2sp_white_clusters_GPU_ctypes.png
+gpu_dbscan_ctypes: All results saved successfully.
+gpu_dbscan_ctypes: End of program.
+===========================================
